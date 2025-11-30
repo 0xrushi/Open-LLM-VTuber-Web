@@ -66,7 +66,9 @@ const createConfig = async (outDir: string) => ({
 
 export default defineConfig(async ({ mode }) => {
   if (mode === 'web') {
-    return createConfig('dist/web');
+    // For web mode, output directly into the backend's `frontend` directory
+    // so the Python server can serve the built assets without manual copying.
+    return createConfig('../frontend');
   }
   return createConfig('dist/renderer');
 });

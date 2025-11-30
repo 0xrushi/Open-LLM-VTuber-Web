@@ -111,6 +111,11 @@ export const useLive2DModel = ({
 
   useEffect(() => {
     const currentUrl = modelInfo?.url;
+    // Skip Live2D initialization when using a VRM model.
+    // VRM rendering is handled by the separate VrmViewer component.
+    if (currentUrl && currentUrl.toLowerCase().endsWith('.vrm')) {
+      return;
+    }
     const sdkScale = (window as any).LAppDefine?.CurrentKScale;
     const modelScale = modelInfo?.kScale !== undefined ? Number(modelInfo.kScale) : undefined;
 

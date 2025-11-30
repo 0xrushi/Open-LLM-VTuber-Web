@@ -77,6 +77,9 @@ export interface MessageEvent {
   client_uid?: string;
   forwarded?: boolean;
   display_text?: DisplayText;
+  // VRM motion payload (mirrors backend VRMMotionPayload)
+  bones?: any;
+  target_client_uid?: string;
   live2d_model?: string;
   browser_view?: {
     debuggerFullscreenUrl: string;

@@ -259,6 +259,14 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       case 'force-new-message':
         setForceNewMessage(true);
         break;
+      case 'vrm-motion':
+        // Forward VRM motion messages to any listener (e.g., a VRM viewer)
+        try {
+          window.dispatchEvent(new CustomEvent('vrm-motion', { detail: message }));
+        } catch (e) {
+          console.error('Failed to dispatch vrm-motion event', e, message);
+        }
+        break;
       case 'interrupt-signal':
         // Handle forwarded interrupt
         interrupt(false); // do not send interrupt signal to server
