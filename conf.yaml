@@ -1,0 +1,21 @@
+# This conf.yaml mirrors the main backend configuration from the parent
+# Open-LLM-VTuber repo, so you can see/edit it alongside the web project.
+#
+# NOTE: The Python backend actually reads ../conf.yaml when you run
+# `python run_server.py` from the Open-LLM-VTuber root. This file is for
+# convenience only and is not used directly by the web dev server.
+
+system_config:
+  conf_version: 'v1.2.1'
+  host: 'localhost'
+  port: 12393
+  config_alts_dir: 'characters'
+
+character_config:
+  conf_name: 'mao_pro'
+  conf_uid: 'mao_pro_001'
+  live2d_model_name: 'mao_pro'
+  character_name: 'Mao'
+  avatar: 'mao.png'
+  human_name: 'Human'
+
