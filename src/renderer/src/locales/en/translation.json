@@ -34,7 +34,8 @@
     },
     "live2d": {
       "pointerInteractive": "Pointer Interactive",
-      "scrollToResize": "Enable Scroll to Resize"
+      "scrollToResize": "Enable Scroll to Resize",
+      "vrmZoom": "VRM Camera Zoom"
     },
     "asr": {
       "autoStopMic": "Auto Stop Mic When AI Start Speaking",

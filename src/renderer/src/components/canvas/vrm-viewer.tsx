@@ -58,17 +58,28 @@ export const VrmViewer = memo(() => {
 
   const normalizedConfig = useMemo(() => {
     if (!modelInfo) return null;
+    const zoom = safeNumber(modelInfo.vrmZoom as number | undefined, 0.4);
+    const baseCameraPosition = (modelInfo.cameraPosition as [number, number, number] | undefined)
+      ?? [0, 1.3, 1.2];
+    
+    // Apply zoom by multiplying the camera position's distance from origin
+    const zoomedCameraPosition: [number, number, number] = [
+      baseCameraPosition[0] * zoom,
+      baseCameraPosition[1],
+      baseCameraPosition[2] * zoom,
+    ];
+
     return {
       url: modelInfo.url,
       scale: safeNumber(modelInfo.kScale as number | undefined, 1),
       x: safeNumber(modelInfo.initialXshift as number | undefined, 0),
       y: safeNumber(modelInfo.initialYshift as number | undefined, 0),
       autoRotate: (modelInfo.autoRotate as boolean | undefined) ?? true,
-      cameraPosition: (modelInfo.cameraPosition as [number, number, number] | undefined)
-        ?? [0, 1.3, 1.2],
+      cameraPosition: zoomedCameraPosition,
       cameraTarget: (modelInfo.cameraTarget as [number, number, number] | undefined)
         ?? [0, 1.3, 0],
       backgroundColor: modelInfo.backgroundColor as string | undefined,
+      zoom,
     };
   }, [modelInfo]);
 
@@ -155,11 +166,13 @@ export const VrmViewer = memo(() => {
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.enablePan = false;
+    controls.enablePan = true; // Enable panning (Shift + drag to move)
     controls.autoRotate = normalizedConfig.autoRotate;
     controls.autoRotateSpeed = 0.8;
-    controls.minDistance = 0.6;
-    controls.maxDistance = 3;
+    // Allow flexible zoom range regardless of slider position
+    // User can always use mouse wheel to zoom further in/out
+    controls.minDistance = 0.1;
+    controls.maxDistance = 10;
     controls.target.fromArray(normalizedConfig.cameraTarget);
     controlsRef.current = controls;
 

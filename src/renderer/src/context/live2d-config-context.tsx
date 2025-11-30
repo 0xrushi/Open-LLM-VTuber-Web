@@ -71,6 +71,9 @@ export interface ModelInfo {
 
   /** Initial scale */
   initialScale?: number;
+
+  /** VRM camera zoom (distance multiplier) */
+  vrmZoom?: number;
 }
 
 /**
@@ -140,6 +143,10 @@ export function Live2DConfigProvider({ children }: { children: React.ReactNode }
         "scrollToResize" in info
           ? info.scrollToResize
           : (modelInfo?.scrollToResize ?? true),
+      vrmZoom:
+        "vrmZoom" in info
+          ? info.vrmZoom
+          : (modelInfo?.vrmZoom ?? 0.4),
     });
   };
 
