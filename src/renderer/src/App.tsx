@@ -18,6 +18,7 @@ import { Toaster } from "./components/ui/toaster";
 import { VADProvider } from "./context/vad-context";
 import { Live2D } from "./components/canvas/live2d";
 import { VrmViewer } from "./components/canvas/vrm-viewer";
+import { MediaPipeController } from "./components/canvas/mediapipe-controller";
 import TitleBar from "./components/electron/title-bar";
 import { InputSubtitle } from "./components/electron/input-subtitle";
 import { ProactiveSpeakProvider } from "./context/proactive-speak-context";
@@ -111,7 +112,14 @@ function AppContent(): JSX.Element {
           ? getResponsiveLive2DWindowStyle(showSidebar)
           : live2dPetStyle)}
       >
-        {isVrmModel ? <VrmViewer /> : <Live2D />}
+        {isVrmModel ? (
+          <>
+            <VrmViewer />
+            <MediaPipeController />
+          </>
+        ) : (
+          <Live2D />
+        )}
       </Box>
 
       {/* Conditional Rendering of Window UI */}

@@ -48,6 +48,22 @@ const createConfig = async (outDir: string) => ({
   base: "./",
   server: {
     port: 3000,
+    proxy: {
+      '/models': {
+        target: 'http://127.0.0.1:12393',
+        changeOrigin: true,
+      },
+      // Also proxy the video file cache if needed
+      '/cache': {
+        target: 'http://127.0.0.1:12393',
+        changeOrigin: true,
+      },
+      // Proxy websocket for standalone viewer if it uses relative path
+      '/ws': {
+        target: 'ws://127.0.0.1:12393',
+        ws: true,
+      }
+    }
   },
   build: {
     outDir: path.join(__dirname, outDir),
