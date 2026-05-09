@@ -4,11 +4,13 @@ import {
 } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
 import {
   GLTFLoader,
   GLTF,
   GLTFParser,
 } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { retargetClip } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import {
@@ -22,6 +24,11 @@ import { useMode } from '@/context/mode-context';
 import { useForceIgnoreMouse } from '@/hooks/utils/use-force-ignore-mouse';
 import { useAiState, AiStateEnum } from '@/context/ai-state-context';
 import { toaster } from '@/components/ui/toaster';
+import {
+  AiSceneRegistry,
+  SceneObjectRegistryEntry,
+  createNamiStudioApartmentScene,
+} from './nami-studio-scene';
 
 interface BoneRotation {
   x?: number;
@@ -47,11 +54,50 @@ interface VrmMotionMessage {
   worldQuaternion?: boolean;
 }
 
+interface AiSceneActionEventDetail {
+  action: string;
+  objectId?: string;
+  sourceText?: string;
+}
+
+interface SeatedContactTarget {
+  objectId: string;
+  targetPelvisY: number;
+  standPosition: [number, number, number];
+  rootX: number;
+  rootZ: number;
+  rootYaw: number;
+}
+
+interface WalkTarget {
+  objectId: string;
+  position: THREE.Vector3;
+  lookAt: THREE.Vector3;
+  onArrive?: () => void;
+}
+
+interface ClipPlaybackOptions {
+  loopOnce?: boolean;
+  clampWhenFinished?: boolean;
+}
+
+interface SeatedRapierHarness {
+  world: any;
+  pelvisBody: any;
+  pelvisCollider: any;
+  seatCollider: any;
+  floorCollider: any;
+  desiredPelvis: THREE.Vector3;
+}
+
 type Vec3 = { x: number; y: number; z: number };
 
 const safeNumber = (value: number | undefined, fallback: number) => (
   Number.isFinite(value) ? Number(value) : fallback
 );
+
+const SITTING_TALKING_FBX_URL = '/models/animations/SittingTalkingFromMixamo.fbx';
+const WALKING_FBX_URL = '/models/animations/WalkingAnimation.fbx';
 
 // Mapping from VRM 0.x standard bone names to Humanoid bone names
 const VRM0_BONE_MAP: Record<string, VRMHumanBoneName> = {
@@ -690,6 +736,8 @@ export const VrmViewer = memo(() => {
   const rootOffsetRef = useRef<THREE.Vector3 | null>(null);
   const modelBasePositionRef = useRef<THREE.Vector3 | null>(null);
   const glbModelRef = useRef<THREE.Object3D | null>(null);
+  const roomModelRef = useRef<THREE.Object3D | null>(null);
+  const vrButtonRef = useRef<HTMLElement | null>(null);
   const glbBonesRef = useRef<Map<string, THREE.Bone>>(new Map());
   // Index for "normalized" lookups (case-insensitive, strips common Mixamo prefixes).
   // This avoids situations where a model has bones named "mixamorig:Hips" while the
@@ -718,6 +766,18 @@ export const VrmViewer = memo(() => {
   const currentStateAnimUrlRef = useRef<string>('');
   const stateAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isVrmaPlayingRef = useRef(false);
+  const seatedContactRef = useRef<SeatedContactTarget | null>(null);
+  const rapierModuleRef = useRef<any | null>(null);
+  const rapierReadyRef = useRef(false);
+  const rapierInitPromiseRef = useRef<Promise<void> | null>(null);
+  const seatedRapierRef = useRef<SeatedRapierHarness | null>(null);
+  const walkTargetRef = useRef<WalkTarget | null>(null);
+  const sceneObjectBaseTransformRef = useRef<Map<string, {
+    position: THREE.Vector3;
+    rotation: THREE.Euler;
+    visible: boolean;
+  }>>(new Map());
+  const lanternLitRef = useRef(true);
 
   const { modelInfo } = useLive2DConfig();
   const { mode } = useMode();
@@ -742,6 +802,16 @@ export const VrmViewer = memo(() => {
   const [wireframe, setWireframe] = useState(false);
   const [rigModelStamp, setRigModelStamp] = useState(0);
 
+  // --- Transform UI ---
+  const [vrmScale, setVrmScale] = useState(1.0);
+  const [vrmPosX, setVrmPosX] = useState(0.0);
+  const [vrmPosY, setVrmPosY] = useState(0.0);
+  const [vrmPosZ, setVrmPosZ] = useState(0.0);
+  const [vrmRotY, setVrmRotY] = useState(0.0);
+  const [scenePos, setScenePos] = useState<Vec3>({ x: 0, y: 0, z: 0 });
+  const [sceneRotDeg, setSceneRotDeg] = useState<Vec3>({ x: 0, y: 0, z: 0 });
+  const [sceneScale, setSceneScale] = useState(1.0);
+
   const normalizedConfig = useMemo(() => {
     if (!modelInfo) return null;
     const zoom = safeNumber(modelInfo.vrmZoom as number | undefined, 0.4);
@@ -756,7 +826,7 @@ export const VrmViewer = memo(() => {
 
     return {
       url: modelInfo.url,
-      scale: safeNumber(modelInfo.kScale as number | undefined, 1),
+      scale: safeNumber(modelInfo.kScale as number | undefined, 0.88),
       x: safeNumber(modelInfo.initialXshift as number | undefined, 0),
       y: safeNumber(modelInfo.initialYshift as number | undefined, 0),
       autoRotate: (modelInfo.autoRotate as boolean | undefined) ?? false,
@@ -765,6 +835,13 @@ export const VrmViewer = memo(() => {
         ?? [0, 1.3, 0],
       backgroundColor: modelInfo.backgroundColor as string | undefined,
       zoom,
+      vrmRotY: safeNumber(modelInfo.vrmRotY as number | undefined, 0),
+      vrmPosZ: safeNumber(modelInfo.vrmPosZ as number | undefined, 0),
+      sceneGlb: modelInfo.sceneGlb as string | undefined,
+      sceneGlbPosition: modelInfo.sceneGlbPosition as [number, number, number] | undefined,
+      sceneGlbRotation: modelInfo.sceneGlbRotation as [number, number, number] | undefined,
+      sceneGlbScale: modelInfo.sceneGlbScale as number | [number, number, number] | undefined,
+      scenePreset: modelInfo.scenePreset as string | undefined,
     };
   }, [modelInfo]);
 
@@ -974,6 +1051,61 @@ export const VrmViewer = memo(() => {
     return glbName ? get(glbName) : null;
   }, []);
 
+  const ensureRapierReady = useCallback(() => {
+    if (rapierReadyRef.current) return Promise.resolve();
+    if (!rapierInitPromiseRef.current) {
+      rapierInitPromiseRef.current = import('@dimforge/rapier3d-compat').then(async (mod) => {
+        const rapier = (mod as any).default ?? mod;
+        await rapier.init();
+        rapierModuleRef.current = rapier;
+        rapierReadyRef.current = true;
+      });
+    }
+    return rapierInitPromiseRef.current;
+  }, []);
+
+  const disposeSeatedRapier = useCallback(() => {
+    seatedRapierRef.current = null;
+  }, []);
+
+  const createSeatedRapierHarness = useCallback((sitPoint: [number, number, number]) => {
+    const RAPIER = rapierModuleRef.current;
+    if (!rapierReadyRef.current || !RAPIER) return null;
+
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    world.timestep = 1 / 60;
+
+    const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.025, 0));
+    const floorCollider = world.createCollider(RAPIER.ColliderDesc.cuboid(6, 0.025, 5), floorBody);
+
+    const seatBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(sitPoint[0], sitPoint[1] - 0.19, sitPoint[2]));
+    const seatCollider = world.createCollider(RAPIER.ColliderDesc.cuboid(0.34, 0.08, 0.34), seatBody);
+
+    const pelvisBody = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(sitPoint[0], sitPoint[1] + 0.04, sitPoint[2])
+        .setLinearDamping(14)
+        .setAngularDamping(12)
+        .setCanSleep(false),
+    );
+    const pelvisCollider = world.createCollider(
+      RAPIER.ColliderDesc.ball(0.16)
+        .setRestitution(0)
+        .setFriction(1.2),
+      pelvisBody,
+    );
+
+    seatedRapierRef.current = {
+      world,
+      pelvisBody,
+      pelvisCollider,
+      seatCollider,
+      floorCollider,
+      desiredPelvis: new THREE.Vector3(sitPoint[0], sitPoint[1], sitPoint[2]),
+    };
+    return seatedRapierRef.current;
+  }, []);
+
   const getBoneNode = useCallback((boneKey: string): THREE.Object3D | null => {
     const vrm = vrmRef.current;
     if (vrm?.humanoid) {
@@ -1036,6 +1168,126 @@ export const VrmViewer = memo(() => {
     root.position.copy(modelBasePositionRef.current);
     root.updateMatrixWorld(true);
   }, [getCurrentModelRoot]);
+
+  const applyVrmTransform = useCallback((scale: number, posX: number, posY: number, posZ: number, rotYDeg: number) => {
+    const root = getCurrentModelRoot();
+    if (!root) return;
+    root.scale.setScalar(scale);
+    root.position.x = posX;
+    root.position.y = posY;
+    root.position.z = posZ;
+    if (modelBasePositionRef.current) {
+      modelBasePositionRef.current.x = posX;
+      modelBasePositionRef.current.y = posY;
+      modelBasePositionRef.current.z = posZ;
+    }
+    const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
+    root.rotation.y = baseRotY + THREE.MathUtils.degToRad(rotYDeg);
+  }, [getCurrentModelRoot]);
+
+  const applySceneTransform = useCallback((pos: Vec3, rotDeg: Vec3, scale: number) => {
+    const room = roomModelRef.current;
+    if (!room) return;
+    room.position.set(pos.x, pos.y, pos.z);
+    room.rotation.set(
+      THREE.MathUtils.degToRad(rotDeg.x),
+      THREE.MathUtils.degToRad(rotDeg.y),
+      THREE.MathUtils.degToRad(rotDeg.z),
+    );
+    room.scale.setScalar(scale);
+  }, []);
+
+  const copyTransformConfig = useCallback(async () => {
+    const cfg: Record<string, unknown> = {
+      kScale: parseFloat(vrmScale.toFixed(4)),
+      initialXshift: parseFloat(vrmPosX.toFixed(4)),
+      initialYshift: parseFloat(vrmPosY.toFixed(4)),
+      vrmPosZ: parseFloat(vrmPosZ.toFixed(4)),
+      vrmRotY: parseFloat(vrmRotY.toFixed(1)),
+    };
+    // Capture live camera state from OrbitControls
+    const controls = controlsRef.current;
+    if (controls) {
+      const cam = controls.object;
+      const tgt = controls.target;
+      cfg.cameraPosition = [
+        parseFloat(cam.position.x.toFixed(4)),
+        parseFloat(cam.position.y.toFixed(4)),
+        parseFloat(cam.position.z.toFixed(4)),
+      ];
+      cfg.cameraTarget = [
+        parseFloat(tgt.x.toFixed(4)),
+        parseFloat(tgt.y.toFixed(4)),
+        parseFloat(tgt.z.toFixed(4)),
+      ];
+      cfg.vrmZoom = 1;
+    }
+    if (normalizedConfig?.sceneGlb) {
+      cfg.sceneGlbPosition = [
+        parseFloat(scenePos.x.toFixed(3)),
+        parseFloat(scenePos.y.toFixed(3)),
+        parseFloat(scenePos.z.toFixed(3)),
+      ];
+      cfg.sceneGlbRotation = [
+        parseFloat(THREE.MathUtils.degToRad(sceneRotDeg.x).toFixed(4)),
+        parseFloat(THREE.MathUtils.degToRad(sceneRotDeg.y).toFixed(4)),
+        parseFloat(THREE.MathUtils.degToRad(sceneRotDeg.z).toFixed(4)),
+      ];
+      cfg.sceneGlbScale = parseFloat(sceneScale.toFixed(4));
+    }
+    const text = JSON.stringify(cfg, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      toaster.create({ title: 'Config copied', description: 'Paste into model_dict.json', type: 'success', duration: 2500 });
+    } catch {
+      toaster.create({ title: 'Copy failed', description: 'Check clipboard permissions', type: 'error', duration: 2500 });
+    }
+  }, [vrmScale, vrmPosX, vrmPosY, vrmPosZ, vrmRotY, scenePos, sceneRotDeg, sceneScale, normalizedConfig?.sceneGlb]);
+
+  const getAiSceneObject = useCallback((objectId: string): SceneObjectRegistryEntry | null => {
+    const registry = (window as any).__AI_SCENE_REGISTRY__ as AiSceneRegistry | undefined;
+    return registry?.objects.find((entry) => entry.id === objectId) ?? null;
+  }, []);
+
+  const getSceneObject3D = useCallback((objectId: string): THREE.Object3D | null => {
+    const object = roomModelRef.current?.getObjectByName(objectId)
+      ?? sceneRef.current?.getObjectByName(objectId)
+      ?? null;
+    if (object && !sceneObjectBaseTransformRef.current.has(objectId)) {
+      sceneObjectBaseTransformRef.current.set(objectId, {
+        position: object.position.clone(),
+        rotation: object.rotation.clone(),
+        visible: object.visible,
+      });
+    }
+    return object;
+  }, []);
+
+  const focusCameraOnSceneObject = useCallback((entry: SceneObjectRegistryEntry) => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const lookAt = entry.interactionPoints.lookAt ?? entry.position;
+    controls.target.set(lookAt[0], lookAt[1], lookAt[2]);
+    const camera = controls.object as THREE.Camera;
+    camera.position.set(lookAt[0] + 1.8, lookAt[1] + 0.8, lookAt[2] + 2.2);
+    camera.updateProjectionMatrix();
+    controls.update();
+  }, []);
+
+  const moveAvatarToSceneObject = useCallback((entry: SceneObjectRegistryEntry) => {
+    const root = getCurrentModelRoot();
+    if (!root) return false;
+    const point = entry.interactionPoints.approach ?? entry.position;
+    const lookAt = entry.interactionPoints.lookAt ?? entry.position;
+    seatedContactRef.current = null;
+    disposeSeatedRapier();
+    root.position.set(point[0], point[1], point[2]);
+    const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
+    root.rotation.y = baseRotY + Math.atan2(lookAt[0] - point[0], lookAt[2] - point[2]);
+    root.updateMatrixWorld(true);
+    modelBasePositionRef.current = root.position.clone();
+    return true;
+  }, [disposeSeatedRapier, getCurrentModelRoot]);
 
   const copyCurrentPoseToClipboard = useCallback(async () => {
     const root = getCurrentModelRoot();
@@ -1216,7 +1468,38 @@ export const VrmViewer = memo(() => {
     });
   }, [getCurrentModelRoot, rigModelStamp, wireframe]);
 
-  const playClipOnCurrentModel = useCallback((clip: THREE.AnimationClip) => {
+  // Sync transform UI sliders from config whenever model changes
+  useEffect(() => {
+    if (!normalizedConfig) return;
+    setVrmScale(normalizedConfig.scale ?? 1);
+    setVrmPosX(normalizedConfig.x ?? 0);
+    setVrmPosY(normalizedConfig.y ?? 0);
+    setVrmPosZ(normalizedConfig.vrmPosZ ?? 0);
+    setVrmRotY(normalizedConfig.vrmRotY ?? 0);
+    const pos = normalizedConfig.sceneGlbPosition ?? [0, 0, 0];
+    const rot = normalizedConfig.sceneGlbRotation ?? [0, 0, 0];
+    const rawS = normalizedConfig.sceneGlbScale ?? 1;
+    const scaleUniform = Array.isArray(rawS) ? rawS[0] : rawS;
+    setScenePos({ x: pos[0], y: pos[1], z: pos[2] });
+    setSceneRotDeg({
+      x: THREE.MathUtils.radToDeg(rot[0]),
+      y: THREE.MathUtils.radToDeg(rot[1]),
+      z: THREE.MathUtils.radToDeg(rot[2]),
+    });
+    setSceneScale(scaleUniform as number);
+  }, [normalizedConfig]);
+
+  const configureActionPlayback = useCallback((action: THREE.AnimationAction, options?: ClipPlaybackOptions) => {
+    if (options?.loopOnce) {
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = options.clampWhenFinished ?? true;
+    } else {
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.clampWhenFinished = false;
+    }
+  }, []);
+
+  const playClipOnCurrentModel = useCallback((clip: THREE.AnimationClip, options?: ClipPlaybackOptions) => {
     const vrmScene = vrmRef.current?.scene ?? null;
     const glbRoot = glbModelRef.current ?? null;
 
@@ -1231,10 +1514,11 @@ export const VrmViewer = memo(() => {
     const mixer = new THREE.AnimationMixer(mixerRoot);
     mixerRef.current = mixer;
     const action = mixer.clipAction(clip);
+    configureActionPlayback(action, options);
     action.reset().play();
     currentActionRef.current = action;
     setIsVrmaPlaying(true);
-  }, []);
+  }, [configureActionPlayback]);
 
   const rebuildGlbBoneIndices = useCallback((root: THREE.Object3D) => {
     const bonesByName = new Map<string, THREE.Bone>();
@@ -1400,11 +1684,12 @@ export const VrmViewer = memo(() => {
     return new THREE.AnimationClip(clip.name || 'mixamo', clip.duration, tracks);
   }, []);
 
-  const playMixamoFbxFromUrl = useCallback((url: string) => {
+  const playMixamoFbxFromUrl = useCallback((url: string, options?: ClipPlaybackOptions) => {
     const loader = new FBXLoader();
     loader.load(
       url,
       (fbx: THREE.Group) => {
+        if (options?.loopOnce && currentStateAnimUrlRef.current !== url) return;
         const clip = (fbx as any).animations?.[0] as THREE.AnimationClip | undefined;
         if (!clip) {
           console.warn('[VrmViewer] No animation found in FBX');
@@ -1490,7 +1775,7 @@ export const VrmViewer = memo(() => {
 
                 console.log('[VrmViewer] Playing FBX animation (retargetClip):', clip.name || '(unnamed)', 'tracks:', converted.tracks.length);
                 console.log('[VrmViewer] Retargeted track samples:', converted.tracks.slice(0, 5).map((t) => t.name));
-                playClipOnCurrentModel(converted);
+                playClipOnCurrentModel(converted, options);
                 return;
               }
             } catch (e) {
@@ -1506,7 +1791,7 @@ export const VrmViewer = memo(() => {
         }
         console.log('[VrmViewer] Playing FBX animation (manual):', clip.name || '(unnamed)', 'tracks:', retargeted.tracks.length);
         console.log('[VrmViewer] Retargeted track samples:', retargeted.tracks.slice(0, 5).map((t) => t.name));
-        playClipOnCurrentModel(retargeted);
+        playClipOnCurrentModel(retargeted, options);
       },
       undefined,
       (err: unknown) => {
@@ -1524,10 +1809,97 @@ export const VrmViewer = memo(() => {
     );
   }, [playClipOnCurrentModel, retargetMixamoClipToCurrentModel]);
 
+  const playVrmRetargetedFbxFromUrl = useCallback((url: string, options?: ClipPlaybackOptions) => {
+    const vrm = vrmRef.current;
+    if (!vrm?.humanoid) return false;
+
+    loadMixamoAnimForVRM(url, vrm).then((clip) => {
+      if (options?.loopOnce && currentStateAnimUrlRef.current !== url) return;
+      if (!vrmRef.current?.scene) return;
+      if (mixerRef.current) {
+        mixerRef.current.stopAllAction();
+      }
+      const mixer = new THREE.AnimationMixer(vrm.scene);
+      mixerRef.current = mixer;
+      const action = mixer.clipAction(clip);
+      configureActionPlayback(action, options);
+      action.reset().play();
+      currentActionRef.current = action;
+      setIsVrmaPlaying(true);
+      if (animMgrRef.current) {
+        animMgrRef.current.isMixamoPlaying = true;
+      }
+    }).catch((err) => {
+      console.error('[VrmViewer] Sitting FBX retarget failed:', err);
+      toaster.create({
+        title: 'Sit animation failed',
+        description: 'Could not retarget the sitting Mixamo FBX to this VRM.',
+        type: 'error',
+        duration: 3500,
+      });
+    });
+
+    return true;
+  }, [configureActionPlayback]);
+
+  const startWalkingToSceneObject = useCallback((entry: SceneObjectRegistryEntry, onArrive?: () => void) => {
+    const root = getCurrentModelRoot();
+    if (!root) return false;
+
+    const point = entry.interactionPoints.approach ?? entry.position;
+    const lookAt = entry.interactionPoints.lookAt ?? entry.position;
+    const target = new THREE.Vector3(point[0], point[1], point[2]);
+    const lookAtTarget = new THREE.Vector3(lookAt[0], lookAt[1], lookAt[2]);
+
+    seatedContactRef.current = null;
+    disposeSeatedRapier();
+    walkTargetRef.current = {
+      objectId: entry.id,
+      position: target,
+      lookAt: lookAtTarget,
+      onArrive,
+    };
+
+    const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
+    root.rotation.y = baseRotY + Math.atan2(target.x - root.position.x, target.z - root.position.z);
+    root.updateMatrixWorld(true);
+
+    currentStateAnimUrlRef.current = WALKING_FBX_URL;
+    const didUseVrmRetarget = playVrmRetargetedFbxFromUrl(WALKING_FBX_URL);
+    if (!didUseVrmRetarget) {
+      playMixamoFbxFromUrl(WALKING_FBX_URL);
+    }
+    return true;
+  }, [disposeSeatedRapier, getCurrentModelRoot, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl]);
+
+  const keepWalkingAnimationActive = useCallback(() => {
+    const action = currentActionRef.current;
+    if (action) {
+      configureActionPlayback(action);
+      action.enabled = true;
+      action.paused = false;
+      const clipDuration = action.getClip().duration;
+      const reachedClipEnd = Number.isFinite(clipDuration)
+        && clipDuration > 0
+        && action.time >= clipDuration - 0.02;
+      if (!action.isRunning() || reachedClipEnd) {
+        action.reset().play();
+      }
+      return;
+    }
+
+    currentStateAnimUrlRef.current = WALKING_FBX_URL;
+    const didUseVrmRetarget = playVrmRetargetedFbxFromUrl(WALKING_FBX_URL);
+    if (!didUseVrmRetarget) {
+      playMixamoFbxFromUrl(WALKING_FBX_URL);
+    }
+  }, [configureActionPlayback, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl]);
+
   // Sync isVrmaPlaying state → ref so render-loop closure can read it
   useEffect(() => { isVrmaPlayingRef.current = isVrmaPlaying; }, [isVrmaPlaying]);
 
   const playStateAnimFbx = useCallback((url: string) => {
+    if (walkTargetRef.current && url !== WALKING_FBX_URL) return;
     if (currentStateAnimUrlRef.current === url) return;
     currentStateAnimUrlRef.current = url;
     const vrm = vrmRef.current;
@@ -1541,6 +1913,7 @@ export const VrmViewer = memo(() => {
       const mixer = mixerRef.current;
       const outgoing = currentActionRef.current;
       const incoming = mixer.clipAction(clip);
+      configureActionPlayback(incoming);
       incoming.reset().play();
       if (outgoing && outgoing !== incoming) {
         outgoing.crossFadeTo(incoming, 0.25, false);
@@ -1551,7 +1924,7 @@ export const VrmViewer = memo(() => {
       console.error('[VrmViewer] State animation failed:', err);
       currentStateAnimUrlRef.current = '';
     });
-  }, []);
+  }, [configureActionPlayback]);
 
   const playLoadedClipByName = useCallback((name: string) => {
     const modelRoot = vrmRef.current?.scene ?? glbModelRef.current;
@@ -1857,6 +2230,9 @@ export const VrmViewer = memo(() => {
           mixerRef.current.stopAllAction();
           mixerRef.current = null;
       }
+      seatedContactRef.current = null;
+      disposeSeatedRapier();
+      walkTargetRef.current = null;
       setIsVrmaPlaying(false);
   };
 
@@ -1974,6 +2350,8 @@ export const VrmViewer = memo(() => {
     };
 
     if (profileId === 'floor_sit_cross_leg') {
+      seatedContactRef.current = null;
+      disposeSeatedRapier();
       const isVRM = Boolean(vrmRef.current?.humanoid);
       if (!isVRM) {
         // Apply captured GLB pose exactly (best match for Thanh.glb).
@@ -2032,9 +2410,318 @@ export const VrmViewer = memo(() => {
       return;
     }
 
+    if (profileId === 'chair_sit') {
+      seatedContactRef.current = null;
+      disposeSeatedRapier();
+      const isVRM = Boolean(vrmRef.current?.humanoid);
+      if (!isVRM) {
+        applyOffsets({
+          hips: new THREE.Euler(0.05, 0, 0, 'XYZ'),
+          spine: new THREE.Euler(0.10, 0, 0, 'XYZ'),
+          chest: new THREE.Euler(0.05, 0, 0, 'XYZ'),
+          leftUpperLeg: new THREE.Euler(1.22, 0.10, 0.04, 'XYZ'),
+          leftLowerLeg: new THREE.Euler(-1.22, 0, 0, 'XYZ'),
+          leftFoot: new THREE.Euler(0.18, 0, 0, 'XYZ'),
+          rightUpperLeg: new THREE.Euler(1.22, -0.10, -0.04, 'XYZ'),
+          rightLowerLeg: new THREE.Euler(-1.22, 0, 0, 'XYZ'),
+          rightFoot: new THREE.Euler(0.18, 0, 0, 'XYZ'),
+          leftUpperArm: new THREE.Euler(0.25, 0, 0.16, 'XYZ'),
+          leftLowerArm: new THREE.Euler(-0.65, 0, 0.08, 'XYZ'),
+          rightUpperArm: new THREE.Euler(0.25, 0, -0.16, 'XYZ'),
+          rightLowerArm: new THREE.Euler(-0.65, 0, -0.08, 'XYZ'),
+        });
+      } else {
+        applyOffsets({
+          hips: new THREE.Euler(0.08, 0, 0, 'XYZ'),
+          spine: new THREE.Euler(0.12, 0, 0, 'XYZ'),
+          chest: new THREE.Euler(0.08, 0, 0, 'XYZ'),
+          neck: new THREE.Euler(-0.03, 0, 0, 'XYZ'),
+          head: new THREE.Euler(-0.03, 0, 0, 'XYZ'),
+          leftUpperLeg: new THREE.Euler(1.28, 0.12, 0.05, 'XYZ'),
+          leftLowerLeg: new THREE.Euler(-1.18, 0, 0, 'XYZ'),
+          leftFoot: new THREE.Euler(0.20, 0, 0.02, 'XYZ'),
+          rightUpperLeg: new THREE.Euler(1.28, -0.12, -0.05, 'XYZ'),
+          rightLowerLeg: new THREE.Euler(-1.18, 0, 0, 'XYZ'),
+          rightFoot: new THREE.Euler(0.20, 0, -0.02, 'XYZ'),
+          leftShoulder: new THREE.Euler(0.05, 0, 0.03, 'XYZ'),
+          leftUpperArm: new THREE.Euler(0.28, 0, 0.18, 'XYZ'),
+          leftLowerArm: new THREE.Euler(-0.72, 0, 0.06, 'XYZ'),
+          leftHand: new THREE.Euler(0.04, 0, 0.04, 'XYZ'),
+          rightShoulder: new THREE.Euler(0.05, 0, -0.03, 'XYZ'),
+          rightUpperArm: new THREE.Euler(0.28, 0, -0.18, 'XYZ'),
+          rightLowerArm: new THREE.Euler(-0.72, 0, -0.06, 'XYZ'),
+          rightHand: new THREE.Euler(0.04, 0, -0.04, 'XYZ'),
+        });
+      }
+
+      setActivePoseProfile(profileId);
+      startPoseIdle([
+        'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+        'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+        'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
+      ]);
+      return;
+    }
+
     // Unknown or "none": just reset.
+    seatedContactRef.current = null;
     setActivePoseProfile('');
   }, [getCurrentModelRoot, getLogicalBoneNode, resetAllBones, resetModelRootPosition, stopProcedural]);
+
+  const sitOnSceneObject = useCallback((objectId: string) => {
+    const target = getAiSceneObject(objectId);
+    const root = getCurrentModelRoot();
+    const sitPoint = target?.interactionPoints?.sit;
+
+    if (!target || !sitPoint || !root || !target.actions.includes('sit')) {
+      toaster.create({
+        title: 'Cannot sit there',
+        description: target ? `${target.humanName} has no sit point.` : `Object ${objectId} was not found.`,
+        type: 'error',
+        duration: 2500,
+      });
+      return;
+    }
+
+    const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
+    const [fx, , fz] = target.facingDirection;
+    const facingYaw = Math.atan2(fx, fz);
+    root.position.set(sitPoint[0], 0, sitPoint[2]);
+    root.rotation.y = baseRotY + facingYaw;
+    root.updateMatrixWorld(true);
+    if (modelBasePositionRef.current) {
+      modelBasePositionRef.current.copy(root.position);
+    }
+
+    stopPoseIdle();
+    stopProcedural();
+    disposeSeatedRapier();
+    seatedContactRef.current = {
+      objectId,
+      targetPelvisY: sitPoint[1],
+      standPosition: target.interactionPoints.approach ?? [sitPoint[0], 0, sitPoint[2] + 0.7],
+      rootX: sitPoint[0],
+      rootZ: sitPoint[2],
+      rootYaw: baseRotY + facingYaw,
+    };
+    createSeatedRapierHarness(sitPoint);
+    ensureRapierReady().then(() => {
+      if (seatedContactRef.current?.objectId !== objectId) return;
+      createSeatedRapierHarness(sitPoint);
+    }).catch((err) => {
+      console.warn('[VrmViewer] Rapier init failed; falling back to kinematic seated correction:', err);
+    });
+    currentStateAnimUrlRef.current = SITTING_TALKING_FBX_URL;
+    const sittingPlayback = { loopOnce: true, clampWhenFinished: true };
+    const didUseVrmRetarget = playVrmRetargetedFbxFromUrl(SITTING_TALKING_FBX_URL, sittingPlayback);
+    if (!didUseVrmRetarget) {
+      playMixamoFbxFromUrl(SITTING_TALKING_FBX_URL, sittingPlayback);
+    }
+
+    toaster.create({
+      title: 'Scene action',
+      description: `Sitting on ${target.humanName}.`,
+      type: 'success',
+      duration: 1800,
+    });
+  }, [createSeatedRapierHarness, disposeSeatedRapier, ensureRapierReady, getAiSceneObject, getCurrentModelRoot, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl, stopPoseIdle, stopProcedural]);
+
+  const standFromSceneObject = useCallback(() => {
+    const root = getCurrentModelRoot();
+    const seatedContact = seatedContactRef.current;
+    const standPosition = seatedContact?.standPosition ?? null;
+
+    seatedContactRef.current = null;
+    disposeSeatedRapier();
+    stopPoseIdle();
+    stopProcedural();
+    stopVrma();
+    resetAllBones();
+
+    if (root) {
+      if (standPosition) {
+        root.position.set(standPosition[0], standPosition[1], standPosition[2]);
+      } else if (modelBasePositionRef.current) {
+        root.position.copy(modelBasePositionRef.current);
+      } else {
+        root.position.y = 0;
+      }
+      const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
+      root.rotation.y = baseRotY;
+      root.updateMatrixWorld(true);
+      modelBasePositionRef.current = root.position.clone();
+    }
+
+    currentStateAnimUrlRef.current = '';
+    if (vrmRef.current?.humanoid) {
+      playStateAnimFbx('/models/animations/Idle.fbx');
+    }
+
+    toaster.create({
+      title: 'Scene action',
+      description: 'Standing up.',
+      type: 'success',
+      duration: 1800,
+    });
+  }, [disposeSeatedRapier, getCurrentModelRoot, playStateAnimFbx, resetAllBones, stopPoseIdle, stopProcedural]);
+
+  const animateSceneObjectOpenState = useCallback((entry: SceneObjectRegistryEntry, open: boolean) => {
+    const object = getSceneObject3D(entry.id);
+    if (!object) return false;
+    const base = sceneObjectBaseTransformRef.current.get(entry.id);
+    if (!base) return false;
+
+    object.visible = base.visible;
+    object.position.copy(base.position);
+    object.rotation.copy(base.rotation);
+
+    const openAmount = open ? 1 : 0;
+    if (entry.type === 'drawer') {
+      object.position.z = base.position.z + (entry.facingDirection[2] || -1) * 0.38 * openAmount;
+    } else if (entry.type === 'cupboard' || entry.type === 'wardrobe') {
+      let animatedPanels = false;
+      object.traverse((child: THREE.Object3D) => {
+        if (child === object || !(child as THREE.Mesh).isMesh) return;
+        const baseTransform = child.userData.openCloseBase ?? {
+          position: child.position.clone(),
+          rotation: child.rotation.clone(),
+        };
+        child.userData.openCloseBase = baseTransform;
+        child.position.copy(baseTransform.position);
+        child.rotation.copy(baseTransform.rotation);
+
+        const name = child.name.toLowerCase();
+        const isLeftPanel = name.includes('door_left') || name.includes('doorpanel_left');
+        const isRightPanel = name.includes('door_right') || name.includes('doorpanel_right');
+        if (!isLeftPanel && !isRightPanel) return;
+
+        animatedPanels = true;
+        const swing = (isLeftPanel ? -0.92 : 0.92) * openAmount;
+        child.rotation.y = baseTransform.rotation.y + swing;
+        child.position.x = baseTransform.position.x + (isLeftPanel ? -0.08 : 0.08) * openAmount;
+        child.position.z = baseTransform.position.z - 0.06 * openAmount;
+      });
+      if (!animatedPanels) object.rotation.y = base.rotation.y + 0.85 * openAmount;
+    } else if (entry.id === 'PROP_TreasureChest_01') {
+      let animatedLid = false;
+      object.traverse((child: THREE.Object3D) => {
+        if (child === object || !(child as THREE.Mesh).isMesh || !child.name.toLowerCase().includes('roundedlid')) return;
+        const baseTransform = child.userData.openCloseBase ?? {
+          position: child.position.clone(),
+          rotation: child.rotation.clone(),
+        };
+        child.userData.openCloseBase = baseTransform;
+        child.position.copy(baseTransform.position);
+        child.rotation.copy(baseTransform.rotation);
+        child.rotation.x = baseTransform.rotation.x - 0.85 * openAmount;
+        child.position.y = baseTransform.position.y + 0.08 * openAmount;
+        child.position.z = baseTransform.position.z + 0.12 * openAmount;
+        animatedLid = true;
+      });
+      if (!animatedLid) object.rotation.x = base.rotation.x - 0.75 * openAmount;
+    } else {
+      object.rotation.y = base.rotation.y + 0.55 * openAmount;
+    }
+    object.updateMatrixWorld(true);
+    return true;
+  }, [getSceneObject3D]);
+
+  const executeSceneObjectAction = useCallback((action: string, objectId: string) => {
+    const entry = getAiSceneObject(objectId);
+    if (!entry) {
+      toaster.create({
+        title: 'Scene action failed',
+        description: `Object ${objectId} was not found.`,
+        type: 'error',
+        duration: 2500,
+      });
+      return;
+    }
+
+    const actionLabel = action === 'moveTo' ? 'Moving to' : action;
+    const perform = () => {
+      switch (action) {
+        case 'moveTo':
+          focusCameraOnSceneObject(entry);
+          break;
+        case 'inspect':
+        case 'read':
+        case 'lookOut':
+        case 'lookThrough':
+          focusCameraOnSceneObject(entry);
+          break;
+        case 'open':
+          animateSceneObjectOpenState(entry, true);
+          focusCameraOnSceneObject(entry);
+          break;
+        case 'close':
+          animateSceneObjectOpenState(entry, false);
+          focusCameraOnSceneObject(entry);
+          break;
+        case 'pickUp': {
+          const object = getSceneObject3D(entry.id);
+          if (object) object.visible = false;
+          break;
+        }
+        case 'toggleLight': {
+          lanternLitRef.current = !lanternLitRef.current;
+          const object = getSceneObject3D(entry.id);
+          const light = sceneRef.current?.getObjectByName('LIGHT_Lantern_Warm_01') as THREE.PointLight | undefined;
+          if (light?.isPointLight) light.intensity = lanternLitRef.current ? 1.3 : 0.15;
+          if (object && (object as THREE.Mesh).isMesh) {
+            const mesh = object as THREE.Mesh;
+            const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+            if (material && 'emissive' in material) {
+              (material as THREE.MeshStandardMaterial).emissive.setHex(lanternLitRef.current ? 0xf2bd58 : 0x000000);
+            }
+          }
+          break;
+        }
+        case 'call':
+          focusCameraOnSceneObject(entry);
+          break;
+        default:
+          focusCameraOnSceneObject(entry);
+          break;
+      }
+    };
+
+    const startedWalk = startWalkingToSceneObject(entry, perform);
+    if (!startedWalk) {
+      moveAvatarToSceneObject(entry);
+      perform();
+    }
+
+    toaster.create({
+      title: 'Scene action',
+      description: `${actionLabel} ${entry.humanName}.`,
+      type: 'success',
+      duration: 1800,
+    });
+  }, [
+    animateSceneObjectOpenState,
+    focusCameraOnSceneObject,
+    getAiSceneObject,
+    getSceneObject3D,
+    moveAvatarToSceneObject,
+    startWalkingToSceneObject,
+  ]);
+
+  useEffect(() => {
+    const onSceneAction = (event: Event) => {
+      const detail = (event as CustomEvent<AiSceneActionEventDetail>).detail;
+      if (detail?.action === 'sit' && detail.objectId) {
+        sitOnSceneObject(detail.objectId);
+      } else if (detail?.action === 'stand') {
+        standFromSceneObject();
+      } else if (detail?.action && detail.objectId) {
+        executeSceneObjectAction(detail.action, detail.objectId);
+      }
+    };
+
+    window.addEventListener('ai-scene-action', onSceneAction);
+    return () => window.removeEventListener('ai-scene-action', onSceneAction);
+  }, [executeSceneObjectAction, sitOnSceneObject, standFromSceneObject]);
 
   // Expose pose profiles to DevTools console:
   // `window.vtuberPose.apply('cross_leg_floor_sit')` / `window.vtuberPose.reset()`
@@ -2042,9 +2729,13 @@ export const VrmViewer = memo(() => {
     (window as any).vtuberPose = {
       apply: (id: string) => applyPoseProfile(id),
       reset: () => applyPoseProfile(''),
+      sit: (objectId = 'CHAIR_Desk_01') => sitOnSceneObject(objectId),
+      stand: () => standFromSceneObject(),
+      action: (action: string, objectId: string) => executeSceneObjectAction(action, objectId),
       profiles: [
         { id: '', name: 'Reset' },
         { id: 'floor_sit_cross_leg', name: 'Floor Sit (Crossed Legs)' },
+        { id: 'chair_sit', name: 'Chair Sit' },
       ],
     };
     return () => {
@@ -2052,7 +2743,7 @@ export const VrmViewer = memo(() => {
         delete (window as any).vtuberPose;
       }
     };
-  }, [applyPoseProfile]);
+  }, [applyPoseProfile, executeSceneObjectAction, sitOnSceneObject, standFromSceneObject]);
 
   const handleDoubleClick = () => {
       const currentUrl = normalizedConfig?.url?.toLowerCase() || "";
@@ -2131,6 +2822,7 @@ export const VrmViewer = memo(() => {
   // Switch to Talking animation and enable lip sync only when audio actually plays
   useEffect(() => {
     const onAudioStart = () => {
+      if (walkTargetRef.current) return;
       if (animMgrRef.current) {
         animMgrRef.current.isSpeaking = true;
         animMgrRef.current.setState('talking');
@@ -2188,27 +2880,52 @@ export const VrmViewer = memo(() => {
 
     console.log('[VrmViewer] Initializing with config:', normalizedConfig);
 
+    const hasSceneGlb = Boolean(normalizedConfig.sceneGlb);
+    const hasNamiStudioScene = normalizedConfig.scenePreset === 'nami_studio_apartment';
+    const hasEnvironmentScene = hasSceneGlb || hasNamiStudioScene;
+
     const scene = new THREE.Scene();
     sceneRef.current = scene;
-    scene.background = normalizedConfig.backgroundColor
-      ? new THREE.Color(normalizedConfig.backgroundColor)
-      : null;
+    if (normalizedConfig.backgroundColor) {
+      scene.background = new THREE.Color(normalizedConfig.backgroundColor);
+    } else if (hasNamiStudioScene) {
+      scene.background = new THREE.Color(0xffc983);
+    } else if (hasSceneGlb) {
+      scene.background = new THREE.Color(0x111111);
+    } else {
+      scene.background = null;
+    }
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
-      alpha: normalizedConfig.backgroundColor === undefined,
+      alpha: !normalizedConfig.backgroundColor && !hasEnvironmentScene,
     });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(container.clientWidth || 1, container.clientHeight || 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = hasNamiStudioScene ? 1.18 : 1;
+    if (hasEnvironmentScene) {
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    }
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
+
+    // Enable WebXR for VR scene support
+    renderer.xr.enabled = true;
+    if (hasEnvironmentScene) {
+      const vrButton = VRButton.createButton(renderer);
+      vrButton.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;pointer-events:auto;';
+      document.body.appendChild(vrButton);
+      vrButtonRef.current = vrButton;
+    }
 
     const camera = new THREE.PerspectiveCamera(
       30,
       (container.clientWidth || 1) / (container.clientHeight || 1),
       0.1,
-      20,
+      hasEnvironmentScene ? 200 : 20,
     );
     camera.position.fromArray(normalizedConfig.cameraPosition);
 
@@ -2226,12 +2943,106 @@ export const VrmViewer = memo(() => {
     scene.add(hemi);
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
     dirLight.position.set(1, 1.5, 0.5);
+    dirLight.castShadow = hasEnvironmentScene;
+    if (hasEnvironmentScene) {
+      dirLight.shadow.mapSize.set(2048, 2048);
+      dirLight.shadow.camera.near = 0.1;
+      dirLight.shadow.camera.far = 20;
+      dirLight.shadow.camera.left = -6;
+      dirLight.shadow.camera.right = 6;
+      dirLight.shadow.camera.top = 6;
+      dirLight.shadow.camera.bottom = -6;
+    }
     scene.add(dirLight);
+
+    let disposed = false;
+
+    if (hasNamiStudioScene) {
+      const { root: apartment, registry } = createNamiStudioApartmentScene();
+      apartment.position.set(0, 0, 0);
+      scene.add(apartment);
+      roomModelRef.current = apartment;
+      (window as any).__AI_SCENE_REGISTRY__ = registry;
+
+      const blueprintLoader = new GLTFLoader();
+      const blueprintDracoLoader = new DRACOLoader();
+      blueprintDracoLoader.setDecoderPath('/draco/');
+      blueprintLoader.setDRACOLoader(blueprintDracoLoader);
+      apartment.traverse((anchor: THREE.Object3D) => {
+        const asset = anchor.userData.blueprintAsset as {
+          url: string;
+          scale: number;
+          offset: [number, number, number];
+          rotation: [number, number, number];
+        } | undefined;
+        if (!asset) return;
+
+        blueprintLoader.load(
+          asset.url,
+          (gltf: GLTF) => {
+            if (disposed) return;
+            const model = gltf.scene;
+            model.name = `${anchor.name}_Blueprint3DModel`;
+            model.rotation.set(...asset.rotation);
+            model.scale.setScalar(asset.scale);
+            model.traverse((child: THREE.Object3D) => {
+              if (!(child as THREE.Mesh).isMesh) return;
+              const mesh = child as THREE.Mesh;
+              mesh.castShadow = true;
+              mesh.receiveShadow = true;
+            });
+            model.updateMatrixWorld(true);
+            const localBox = new THREE.Box3().setFromObject(model);
+            const localCenter = new THREE.Vector3();
+            localBox.getCenter(localCenter);
+            model.position.set(
+              asset.offset[0] - localCenter.x,
+              asset.offset[1] - localBox.min.y,
+              asset.offset[2] - localCenter.z,
+            );
+            anchor.add(model);
+            anchor.updateMatrixWorld(true);
+          },
+          undefined,
+          (err: unknown) => console.error(`[VrmViewer] Failed to load Blueprint3D asset ${asset.url}:`, err),
+        );
+      });
+
+      console.log('[VrmViewer] Nami studio apartment scene ready:', registry);
+    }
+
+    // Load 3D scene/room GLB environment
+    if (hasSceneGlb) {
+      const roomLoader = new GLTFLoader();
+      roomLoader.load(
+        normalizedConfig.sceneGlb,
+        (gltf: GLTF) => {
+          if (disposed) return;
+          const room = gltf.scene;
+          const [px, py, pz] = normalizedConfig.sceneGlbPosition ?? [0, 0, 0];
+          const [rx, ry, rz] = normalizedConfig.sceneGlbRotation ?? [0, 0, 0];
+          const rawScale = normalizedConfig.sceneGlbScale ?? 1;
+          const [sx, sy, sz] = Array.isArray(rawScale) ? rawScale : [rawScale as number, rawScale as number, rawScale as number];
+          room.position.set(px, py, pz);
+          room.rotation.set(rx, ry, rz);
+          room.scale.set(sx, sy, sz);
+          room.name = 'vrSceneRoom';
+          room.traverse((child: THREE.Object3D) => {
+            if (!(child as THREE.Mesh).isMesh) return;
+            (child as THREE.Mesh).castShadow = false;
+            (child as THREE.Mesh).receiveShadow = true;
+          });
+          scene.add(room);
+          roomModelRef.current = room;
+          console.log('[VrmViewer] VR scene GLB loaded:', normalizedConfig.sceneGlb);
+        },
+        undefined,
+        (err: unknown) => console.error('[VrmViewer] Failed to load scene GLB:', err),
+      );
+    }
 
     const loader = new GLTFLoader();
     loader.register((parser: GLTFParser) => new VRMLoaderPlugin(parser));
-
-    let disposed = false;
 
     console.log('[VrmViewer] Starting load:', normalizedConfig.url);
     loader.load(
@@ -2260,13 +3071,14 @@ export const VrmViewer = memo(() => {
           // Fully reset scene rotation — keep only the Y=π that rotateVRM0 sets for
           // VRM 0.x (needed to flip the facing direction); zero everything else.
           const isVRM0Scene = vrm.meta?.metaVersion === '0';
-          vrm.scene.rotation.set(0, isVRM0Scene ? Math.PI : 0, 0);
+          const baseRotY = isVRM0Scene ? Math.PI : 0;
+          vrm.scene.rotation.set(0, baseRotY + THREE.MathUtils.degToRad(normalizedConfig.vrmRotY ?? 0), 0);
           console.log('[VrmViewer] metaVersion=', vrm.meta?.metaVersion, 'scene.rotation.y=', vrm.scene.rotation.y);
           vrm.scene.traverse((obj: THREE.Object3D) => {
             obj.frustumCulled = false;
           });
           vrm.scene.scale.setScalar(normalizedConfig.scale);
-          vrm.scene.position.set(normalizedConfig.x, normalizedConfig.y, 0);
+          vrm.scene.position.set(normalizedConfig.x, normalizedConfig.y, normalizedConfig.vrmPosZ ?? 0);
           modelBasePositionRef.current = vrm.scene.position.clone();
           scene.add(vrm.scene);
           vrmRef.current = vrm;
@@ -2316,7 +3128,7 @@ export const VrmViewer = memo(() => {
           });
           rebuildGlbBoneIndices(model);
           model.scale.setScalar(normalizedConfig.scale);
-          model.position.set(normalizedConfig.x, normalizedConfig.y, 0);
+          model.position.set(normalizedConfig.x, normalizedConfig.y, normalizedConfig.vrmPosZ ?? 0);
           modelBasePositionRef.current = model.position.clone();
           scene.add(model);
           glbModelRef.current = model;
@@ -2438,11 +3250,120 @@ export const VrmViewer = memo(() => {
               vrm.expressionManager?.setValue('aa', 0);
           }
       }
+
+      const walkTarget = walkTargetRef.current;
+      if (walkTarget) {
+        const root = vrmRef.current?.scene ?? glbModelRef.current;
+        if (root) {
+          keepWalkingAnimationActive();
+          const toTarget = walkTarget.position.clone().sub(root.position);
+          toTarget.y = 0;
+          const distance = toTarget.length();
+          if (distance <= 0.05) {
+            root.position.set(walkTarget.position.x, walkTarget.position.y, walkTarget.position.z);
+            root.rotation.y = (vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0)
+              + Math.atan2(walkTarget.lookAt.x - root.position.x, walkTarget.lookAt.z - root.position.z);
+            root.updateMatrixWorld(true);
+            modelBasePositionRef.current = root.position.clone();
+
+            const onArrive = walkTarget.onArrive;
+            walkTargetRef.current = null;
+            if (mixerRef.current) {
+              mixerRef.current.stopAllAction();
+              mixerRef.current = null;
+              currentActionRef.current = null;
+            }
+            setIsVrmaPlaying(false);
+            currentStateAnimUrlRef.current = '';
+            if (vrmRef.current?.humanoid) {
+              playStateAnimFbx('/models/animations/Idle.fbx');
+            }
+            onArrive?.();
+          } else {
+            const step = Math.min(distance, delta * 1.15);
+            const direction = toTarget.normalize();
+            root.position.addScaledVector(direction, step);
+            root.position.y = THREE.MathUtils.lerp(root.position.y, walkTarget.position.y, 0.18);
+            root.rotation.y = (vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0)
+              + Math.atan2(direction.x, direction.z);
+            root.updateMatrixWorld(true);
+          }
+        }
+      }
+
+      const seatedContact = seatedContactRef.current;
+      if (seatedContact) {
+        const root = vrmRef.current?.scene ?? glbModelRef.current;
+        const hipsNode = vrmRef.current?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Hips)
+          ?? glbBonesNormalizedRef.current.get('hips')
+          ?? null;
+        const leftFootNode = vrmRef.current?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.LeftFoot)
+          ?? glbBonesNormalizedRef.current.get('leftfoot')
+          ?? null;
+        const rightFootNode = vrmRef.current?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.RightFoot)
+          ?? glbBonesNormalizedRef.current.get('rightfoot')
+          ?? null;
+        if (root && hipsNode) {
+          root.position.x = THREE.MathUtils.lerp(root.position.x, seatedContact.rootX, 0.35);
+          root.position.z = THREE.MathUtils.lerp(root.position.z, seatedContact.rootZ, 0.35);
+          root.rotation.x = 0;
+          root.rotation.y = seatedContact.rootYaw;
+          root.rotation.z = 0;
+          root.updateMatrixWorld(true);
+
+          const hipsWorld = new THREE.Vector3();
+          hipsNode.getWorldPosition(hipsWorld);
+          const rapierHarness = seatedRapierRef.current;
+          let targetPelvisY = seatedContact.targetPelvisY;
+          if (rapierHarness) {
+            const bodyPos = rapierHarness.pelvisBody.translation();
+            const desired = rapierHarness.desiredPelvis;
+            const velocity = new THREE.Vector3(
+              desired.x - bodyPos.x,
+              desired.y - bodyPos.y,
+              desired.z - bodyPos.z,
+            ).multiplyScalar(10);
+            velocity.clampLength(0, 2.2);
+            rapierHarness.pelvisBody.setLinvel({ x: velocity.x, y: velocity.y, z: velocity.z }, true);
+            rapierHarness.pelvisBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+            rapierHarness.world.step();
+            const solved = rapierHarness.pelvisBody.translation();
+            targetPelvisY = solved.y;
+          }
+
+          const deltaY = THREE.MathUtils.clamp(targetPelvisY - hipsWorld.y, -0.06, 0.06);
+          if (Math.abs(deltaY) > 0.0005) {
+            root.position.y += deltaY;
+            root.updateMatrixWorld(true);
+            if (modelBasePositionRef.current) {
+              modelBasePositionRef.current.copy(root.position);
+            }
+          }
+
+          const floorY = 0.015;
+          const footWorldPositions = [leftFootNode, rightFootNode]
+            .filter((node): node is THREE.Object3D => Boolean(node))
+            .map((node) => {
+              const p = new THREE.Vector3();
+              node.getWorldPosition(p);
+              return p;
+            });
+          const minFootY = footWorldPositions.length
+            ? Math.min(...footWorldPositions.map((p) => p.y))
+            : Infinity;
+          if (minFootY < floorY) {
+            root.position.y += floorY - minFootY;
+            root.updateMatrixWorld(true);
+            if (modelBasePositionRef.current) {
+              modelBasePositionRef.current.copy(root.position);
+            }
+          }
+        }
+      }
       
       renderer.render(scene, camera);
-      requestRef.current = requestAnimationFrame(renderLoop);
     };
-    renderLoop();
+    renderer.setAnimationLoop(renderLoop);
 
     const resizeObserver = new ResizeObserver(() => {
       if (!container) return;
@@ -2458,14 +3379,23 @@ export const VrmViewer = memo(() => {
     return () => {
       disposed = true;
       resizeObserver.disconnect();
-      cancelAnimationFrame(requestRef.current ?? 0);
+      renderer.setAnimationLoop(null);
       controls.dispose();
       renderer.dispose();
       if (stateAnimTimerRef.current) { clearTimeout(stateAnimTimerRef.current); stateAnimTimerRef.current = null; }
       if (animMgrRef.current) { animMgrRef.current.destroy(); animMgrRef.current = null; }
       currentStateAnimUrlRef.current = '';
+      seatedContactRef.current = null;
+      disposeSeatedRapier();
+      walkTargetRef.current = null;
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
+      }
+      if (vrButtonRef.current) {
+        if (document.body.contains(vrButtonRef.current)) {
+          document.body.removeChild(vrButtonRef.current);
+        }
+        vrButtonRef.current = null;
       }
       const disposeObject = (obj: THREE.Object3D) => {
         if ((obj as THREE.Mesh).isMesh) {
@@ -2478,9 +3408,17 @@ export const VrmViewer = memo(() => {
           }
         }
       };
+      if (roomModelRef.current) {
+        scene.remove(roomModelRef.current);
+        roomModelRef.current.traverse(disposeObject);
+        roomModelRef.current = null;
+      }
+      if ((window as any).__AI_SCENE_REGISTRY__?.sceneId === 'nami_studio_apartment') {
+        delete (window as any).__AI_SCENE_REGISTRY__;
+      }
       vrmRef.current?.scene.traverse(disposeObject);
       glbModelRef.current?.traverse(disposeObject);
-      
+
       vrmRef.current = null;
       glbModelRef.current = null;
       glbBonesRef.current.clear();
@@ -2861,6 +3799,199 @@ export const VrmViewer = memo(() => {
             Stop animation to edit bones.
           </div>
         ) : null}
+
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.3)', margin: '4px 0' }} />
+
+        {/* ── VRM Transform ── */}
+        <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>VRM Transform</div>
+
+        <div style={{ opacity: 0.85 }}>Scale</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <input
+            type="range" min={0.01} max={10} step={0.01}
+            value={vrmScale}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setVrmScale(v);
+              applyVrmTransform(v, vrmPosX, vrmPosY, vrmPosZ, vrmRotY);
+            }}
+            style={{ flex: 1 }}
+          />
+          <span style={{ width: '44px', textAlign: 'right' }}>{vrmScale.toFixed(2)}</span>
+        </label>
+
+        <div style={{ opacity: 0.85 }}>Position</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ width: '10px' }}>X</span>
+          <input
+            type="range" min={-10} max={10} step={0.05}
+            value={vrmPosX}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setVrmPosX(v);
+              applyVrmTransform(vrmScale, v, vrmPosY, vrmPosZ, vrmRotY);
+            }}
+            style={{ flex: 1 }}
+          />
+          <span style={{ width: '44px', textAlign: 'right' }}>{vrmPosX.toFixed(2)}</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ width: '10px' }}>Y</span>
+          <input
+            type="range" min={-10} max={10} step={0.05}
+            value={vrmPosY}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setVrmPosY(v);
+              applyVrmTransform(vrmScale, vrmPosX, v, vrmPosZ, vrmRotY);
+            }}
+            style={{ flex: 1 }}
+          />
+          <span style={{ width: '44px', textAlign: 'right' }}>{vrmPosY.toFixed(2)}</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ width: '10px' }}>Z</span>
+          <input
+            type="range" min={-10} max={10} step={0.05}
+            value={vrmPosZ}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setVrmPosZ(v);
+              applyVrmTransform(vrmScale, vrmPosX, vrmPosY, v, vrmRotY);
+            }}
+            style={{ flex: 1 }}
+          />
+          <span style={{ width: '44px', textAlign: 'right' }}>{vrmPosZ.toFixed(2)}</span>
+        </label>
+
+        <div style={{ opacity: 0.85 }}>Rotation Y (deg)</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <input
+            type="range" min={-180} max={180} step={1}
+            value={Math.round(vrmRotY)}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setVrmRotY(v);
+              applyVrmTransform(vrmScale, vrmPosX, vrmPosY, vrmPosZ, v);
+            }}
+            style={{ flex: 1 }}
+          />
+          <span style={{ width: '44px', textAlign: 'right' }}>{Math.round(vrmRotY)}°</span>
+        </label>
+
+        <button
+          onClick={() => {
+            const s = normalizedConfig?.scale ?? 1;
+            const px = normalizedConfig?.x ?? 0;
+            const py = normalizedConfig?.y ?? 0;
+            const pz = normalizedConfig?.vrmPosZ ?? 0;
+            const ry = normalizedConfig?.vrmRotY ?? 0;
+            setVrmScale(s); setVrmPosX(px); setVrmPosY(py); setVrmPosZ(pz); setVrmRotY(ry);
+            applyVrmTransform(s, px, py, pz, ry);
+          }}
+          style={{
+            cursor: 'pointer', background: 'rgba(255,255,255,0.12)', color: 'white',
+            border: '1px solid rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: '4px',
+          }}
+        >
+          Reset VRM Transform
+        </button>
+
+        {/* ── Scene Transform (only when sceneGlb is set) ── */}
+        {normalizedConfig?.sceneGlb ? (
+          <>
+            <div style={{ height: '1px', background: 'rgba(255,255,255,0.3)', margin: '4px 0' }} />
+            <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Scene Transform</div>
+
+            <div style={{ opacity: 0.85 }}>Position</div>
+            {(['x', 'y', 'z'] as const).map((axis) => (
+              <label key={axis} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: '10px' }}>{axis.toUpperCase()}</span>
+                <input
+                  type="range" min={-20} max={20} step={0.1}
+                  value={scenePos[axis]}
+                  onChange={(e) => {
+                    const next = { ...scenePos, [axis]: Number(e.target.value) };
+                    setScenePos(next);
+                    applySceneTransform(next, sceneRotDeg, sceneScale);
+                  }}
+                  style={{ flex: 1 }}
+                />
+                <span style={{ width: '44px', textAlign: 'right' }}>{scenePos[axis].toFixed(1)}</span>
+              </label>
+            ))}
+
+            <div style={{ opacity: 0.85 }}>Rotation (deg)</div>
+            {(['x', 'y', 'z'] as const).map((axis) => (
+              <label key={axis} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: '10px' }}>{axis.toUpperCase()}</span>
+                <input
+                  type="range" min={-180} max={180} step={1}
+                  value={Math.round(sceneRotDeg[axis])}
+                  onChange={(e) => {
+                    const next = { ...sceneRotDeg, [axis]: Number(e.target.value) };
+                    setSceneRotDeg(next);
+                    applySceneTransform(scenePos, next, sceneScale);
+                  }}
+                  style={{ flex: 1 }}
+                />
+                <span style={{ width: '44px', textAlign: 'right' }}>{Math.round(sceneRotDeg[axis])}</span>
+              </label>
+            ))}
+
+            <div style={{ opacity: 0.85 }}>Scale</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input
+                type="range" min={0.01} max={50} step={0.05}
+                value={sceneScale}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setSceneScale(v);
+                  applySceneTransform(scenePos, sceneRotDeg, v);
+                }}
+                style={{ flex: 1 }}
+              />
+              <span style={{ width: '44px', textAlign: 'right' }}>{sceneScale.toFixed(2)}</span>
+            </label>
+
+            <button
+              onClick={() => {
+                const pos = normalizedConfig.sceneGlbPosition ?? [0, 0, 0];
+                const rot = normalizedConfig.sceneGlbRotation ?? [0, 0, 0];
+                const rawS = normalizedConfig.sceneGlbScale ?? 1;
+                const s = Array.isArray(rawS) ? rawS[0] : rawS as number;
+                const p = { x: pos[0], y: pos[1], z: pos[2] };
+                const r = {
+                  x: THREE.MathUtils.radToDeg(rot[0]),
+                  y: THREE.MathUtils.radToDeg(rot[1]),
+                  z: THREE.MathUtils.radToDeg(rot[2]),
+                };
+                setScenePos(p); setSceneRotDeg(r); setSceneScale(s);
+                applySceneTransform(p, r, s);
+              }}
+              style={{
+                cursor: 'pointer', background: 'rgba(255,255,255,0.12)', color: 'white',
+                border: '1px solid rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: '4px',
+              }}
+            >
+              Reset Scene Transform
+            </button>
+          </>
+        ) : null}
+
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.3)', margin: '4px 0' }} />
+        <button
+          onClick={copyTransformConfig}
+          style={{
+            cursor: 'pointer', background: '#2d6a4f', color: 'white',
+            border: '1px solid rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: '4px',
+          }}
+        >
+          Copy Config to Clipboard
+        </button>
+        <div style={{ opacity: 0.65, fontSize: '10px' }}>
+          Paste into model_dict.json to save.
+        </div>
       </div>
     </div>
   );

@@ -42,6 +42,9 @@ export interface ModelInfo {
   /** Model URL */
   url: string;
 
+  /** Renderer family for 3D models such as VRM/GLB */
+  renderer?: string;
+
   /** Scale factor */
   kScale: number;
 
@@ -74,6 +77,36 @@ export interface ModelInfo {
 
   /** VRM camera zoom (distance multiplier) */
   vrmZoom?: number;
+
+  /** VRM model Y-axis rotation in degrees */
+  vrmRotY?: number;
+
+  /** VRM model Z position (depth in scene) */
+  vrmPosZ?: number;
+
+  /** VR scene - GLB environment file URL */
+  sceneGlb?: string;
+  /** VR scene GLB position offset [x, y, z] */
+  sceneGlbPosition?: [number, number, number];
+  /** VR scene GLB rotation [x, y, z] in radians */
+  sceneGlbRotation?: [number, number, number];
+  /** VR scene GLB scale (uniform number or [x, y, z]) */
+  sceneGlbScale?: number | [number, number, number];
+
+  /** Built-in procedural scene preset id */
+  scenePreset?: string;
+
+  /** Scene or viewer background color */
+  backgroundColor?: string;
+
+  /** VRM camera position [x, y, z] */
+  cameraPosition?: [number, number, number];
+
+  /** VRM camera target [x, y, z] */
+  cameraTarget?: [number, number, number];
+
+  /** Enable orbit camera auto-rotation */
+  autoRotate?: boolean;
 }
 
 /**
@@ -128,8 +161,13 @@ export function Live2DConfigProvider({ children }: { children: React.ReactNode }
       return;
     }
 
-    // Always use the scale defined in the incoming info object (from config)
-    const finalScale = Number(info.kScale || 0.5) * 2;
+    const isVrmRenderer = info.renderer === "vrm"
+      || /\.(vrm|glb|gltf)(\?|#|$)/i.test(info.url);
+    // Live2D configs historically use half-scale values. VRM/GLB configs are
+    // already authored in Three.js world scale, so keep them literal.
+    const finalScale = isVrmRenderer
+      ? Number(info.kScale || 0.88)
+      : Number(info.kScale || 0.5) * 2;
     console.log("Setting model info with default scale:", finalScale);
 
     setModelInfoState({
