@@ -7,7 +7,7 @@
 import { useEffect, useRef, useCallback, useState, RefObject } from "react";
 import { ModelInfo } from "@/context/live2d-config-context";
 import { updateModelConfig } from '../../../WebSDK/src/lappdefine';
-import { LAppDelegate } from '../../../WebSDK/src/lappdelegate';
+import { s_instance as lappDelegateInstance } from '../../../WebSDK/src/lappdelegate';
 import { initializeLive2D } from '@cubismsdksamples/main';
 import { useMode } from '@/context/mode-context';
 
@@ -27,7 +27,8 @@ const DRAG_DISTANCE_THRESHOLD_PX = 5; // Min distance to be considered a drag
 
 function parseModelUrl(url: string): { baseUrl: string; modelDir: string; modelFileName: string } {
   try {
-    const urlObj = new URL(url);
+    // Support both absolute URLs and backend-relative paths like `/live2d-models/...`.
+    const urlObj = new URL(url, window.location.origin);
     const { pathname } = urlObj;
 
     const lastSlashIndex = pathname.lastIndexOf('/');
@@ -111,9 +112,18 @@ export const useLive2DModel = ({
 
   useEffect(() => {
     const currentUrl = modelInfo?.url;
-    // Skip Live2D initialization when using a VRM model.
-    // VRM rendering is handled by the separate VrmViewer component.
-    if (currentUrl && currentUrl.toLowerCase().endsWith('.vrm')) {
+    // Only initialize Live2D for actual Live2D `.model3.json` URLs.
+    // The app also uses this context for VRM/GLB/GLTF models.
+    if (!currentUrl) {
+      return;
+    }
+    const renderer = String((modelInfo as any)?.renderer ?? '').toLowerCase();
+    const lowerUrl = currentUrl.toLowerCase();
+    const isVrmLike = renderer === 'vrm' || lowerUrl.endsWith('.vrm') || lowerUrl.endsWith('.glb') || lowerUrl.endsWith('.gltf');
+    if (isVrmLike) {
+      return;
+    }
+    if (!lowerUrl.endsWith('.model3.json')) {
       return;
     }
     const sdkScale = (window as any).LAppDefine?.CurrentKScale;
@@ -212,7 +222,8 @@ export const useLive2DModel = ({
     if (!adapter || !canvasRef.current) return;
 
     const model = adapter.getModel();
-    const view = LAppDelegate.getInstance().getView();
+    // Avoid creating a delegate singleton before Live2D is initialized.
+    const view = (lappDelegateInstance as any)?.getView?.();
     if (!view || !model) return;
 
     const canvas = canvasRef.current;
@@ -248,7 +259,7 @@ export const useLive2DModel = ({
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const adapter = (window as any).getLAppAdapter?.();
-    const view = LAppDelegate.getInstance().getView();
+    const view = (lappDelegateInstance as any)?.getView?.();
     const model = adapter?.getModel();
 
     // --- Start Drag Logic ---
@@ -341,7 +352,7 @@ export const useLive2DModel = ({
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     const adapter = (window as any).getLAppAdapter?.();
     const model = adapter?.getModel();
-    const view = LAppDelegate.getInstance().getView();
+    const view = (lappDelegateInstance as any)?.getView?.();
 
     if (isDragging) {
       // Finalize drag

@@ -102,6 +102,13 @@ function AppContent(): JSX.Element {
     return modelInfo.url.toLowerCase().endsWith(".vrm");
   }, [modelInfo]);
 
+  // Video pose tracking currently only supports VRM avatars. Avoid mounting
+  // MediaPipe for GLB/GLTF to prevent runtime errors and wasted work.
+  const isVrmAvatarFile = useMemo(() => {
+    if (!modelInfo?.url) return false;
+    return modelInfo.url.toLowerCase().endsWith(".vrm");
+  }, [modelInfo?.url]);
+
   return (
     <>
       <Box
@@ -115,7 +122,7 @@ function AppContent(): JSX.Element {
         {isVrmModel ? (
           <>
             <VrmViewer />
-            <MediaPipeController />
+            {isVrmAvatarFile ? <MediaPipeController /> : null}
           </>
         ) : (
           <Live2D />

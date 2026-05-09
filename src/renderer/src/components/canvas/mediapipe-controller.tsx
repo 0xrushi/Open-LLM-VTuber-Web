@@ -1,11 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
-import { Holistic, Results } from '@mediapipe/holistic';
+import type { Results } from '@mediapipe/holistic';
 import { Camera } from '@mediapipe/camera_utils';
 // @ts-ignore
 import * as Kalidokit from 'kalidokit';
 import { Box, Button, Text, VStack, Input } from '@chakra-ui/react';
 import { useLive2DConfig } from '@/context/live2d-config-context';
 import { toaster } from '@/components/ui/toaster';
+
+const HOLISTIC_VERSION = '0.5.1675471629';
+
+const loadScriptOnce = (() => {
+  const cache = new Map<string, Promise<void>>();
+  return (src: string) => {
+    const existing = cache.get(src);
+    if (existing) return existing;
+    const p = new Promise<void>((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = src;
+      el.async = true;
+      el.crossOrigin = 'anonymous';
+      el.onload = () => resolve();
+      el.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+      document.head.appendChild(el);
+    });
+    cache.set(src, p);
+    return p;
+  };
+})();
 
 // Define the shape of the event detail to match VrmViewer
 interface BoneRotation {
@@ -31,38 +52,69 @@ export const MediaPipeController = () => {
   const [status, setStatus] = useState('Initializing...');
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isWebcam, setIsWebcam] = useState(false);
-  const holisticRef = useRef<Holistic | null>(null);
+  const holisticRef = useRef<any>(null);
   const cameraRef = useRef<Camera | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const { modelInfo } = useLive2DConfig();
 
   useEffect(() => {
-    // Initialize MediaPipe Holistic
-    // @ts-ignore
-    const holistic = new Holistic({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1635989137/${file}`;
-      },
-    });
+    // Only supported for VRM avatars. (GLB/GLTF are intentionally excluded.)
+    const currentUrl = modelInfo?.url?.toLowerCase() || '';
+    if (!currentUrl.endsWith('.vrm')) {
+      setStatus('Pose tracking is available for VRM avatars only.');
+      return () => {};
+    }
 
-    holistic.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7,
-      refineFaceLandmarks: true,
-    });
+    let cancelled = false;
+    let instance: any = null;
 
-    holistic.onResults(onResults);
-    holisticRef.current = holistic;
+    const init = async () => {
+      try {
+        // In some bundlers, `@mediapipe/holistic` doesn't provide a usable constructor.
+        // Load the official browser build which defines `window.Holistic`.
+        await loadScriptOnce(`https://cdn.jsdelivr.net/npm/@mediapipe/holistic@${HOLISTIC_VERSION}/holistic.js`);
+        const HolisticCtor = (window as any).Holistic;
+        if (typeof HolisticCtor !== 'function') {
+          throw new Error('window.Holistic is not available after script load');
+        }
+        if (cancelled) return;
 
-    setStatus('Ready to load video or webcam');
+        instance = new HolisticCtor({
+          locateFile: (file: string) => (
+            `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@${HOLISTIC_VERSION}/${file}`
+          ),
+        });
+
+        instance.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.7,
+          refineFaceLandmarks: true,
+        });
+
+        instance.onResults(onResults);
+        holisticRef.current = instance;
+        setStatus('Ready to load video or webcam');
+      } catch (err) {
+        console.error('[MediaPipe] Failed to initialize Holistic:', err);
+        setStatus('Pose tracking failed to initialize. Check console for details.');
+      }
+    };
+
+    init();
 
     return () => {
-      holistic.close();
+      cancelled = true;
+      try {
+        instance?.close?.();
+      } catch (e) {
+        // ignore
+      }
+      holisticRef.current = null;
     };
-  }, []);
+  }, [modelInfo?.url]);
 
   const onResults = (results: Results) => {
     const videoElement = videoRef.current;

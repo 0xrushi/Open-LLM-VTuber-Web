@@ -3,8 +3,8 @@
 /* eslint-disable no-underscore-dangle */
 import { useEffect, useCallback, RefObject, useRef } from 'react';
 import { ModelInfo } from '@/context/live2d-config-context';
-import { LAppDelegate } from '../../../WebSDK/src/lappdelegate';
-import { LAppLive2DManager } from '../../../WebSDK/src/lapplive2dmanager';
+import { s_instance as lappDelegateInstance } from '../../../WebSDK/src/lappdelegate';
+import { s_instance as live2dManagerInstance } from '../../../WebSDK/src/lapplive2dmanager';
 import { useMode } from '@/context/mode-context';
 
 // Constants for model scaling behavior
@@ -26,10 +26,12 @@ interface UseLive2DResizeProps {
  */
 export const applyScale = (scale: number) => {
   try {
-    const manager = LAppLive2DManager.getInstance();
+    // Do not create a manager instance just to scale. Creating it will try to load a model,
+    // which fails when model config isn't ready yet (and causes `/undefined/undefined.model3.json` requests).
+    const manager = live2dManagerInstance as any;
     if (!manager) return;
 
-    const model = manager.getModel(0);
+    const model = manager.getModel?.(0);
     if (!model) return;
 
     // @ts-ignore
@@ -198,11 +200,10 @@ export const useLive2DResize = ({
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
 
-      const delegate = LAppDelegate.getInstance();
-      if (delegate) {
-        delegate.onResize();
-      } else {
-        console.warn('[Resize] LAppDelegate instance not found.');
+      // Avoid creating a delegate instance before Live2D is initialized.
+      // Creating it triggers a manager singleton which tries to load a model immediately.
+      if (lappDelegateInstance) {
+        (lappDelegateInstance as any).onResize?.();
       }
 
       isResizingRef.current = false;

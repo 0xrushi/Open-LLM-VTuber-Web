@@ -9,6 +9,8 @@ import {
   GLTF,
   GLTFParser,
 } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { retargetClip } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import {
   VRMLoaderPlugin,
   VRM,
@@ -19,6 +21,7 @@ import { useLive2DConfig } from '@/context/live2d-config-context';
 import { useMode } from '@/context/mode-context';
 import { useForceIgnoreMouse } from '@/hooks/utils/use-force-ignore-mouse';
 import { useAiState, AiStateEnum } from '@/context/ai-state-context';
+import { toaster } from '@/components/ui/toaster';
 
 interface BoneRotation {
   x?: number;
@@ -43,6 +46,8 @@ interface VrmMotionMessage {
   bones?: BonePose[];
   worldQuaternion?: boolean;
 }
+
+type Vec3 = { x: number; y: number; z: number };
 
 const safeNumber = (value: number | undefined, fallback: number) => (
   Number.isFinite(value) ? Number(value) : fallback
@@ -84,6 +89,597 @@ const VRM0_BONE_MAP: Record<string, VRMHumanBoneName> = {
     'J_Bip_R_Little1': 'rightLittleProximal', 'J_Bip_R_Little2': 'rightLittleIntermediate', 'J_Bip_R_Little3': 'rightLittleDistal',
 };
 
+// Mixamo (FBX) bone names to VRM humanoid bone names.
+// Mixamo rigs commonly use these exact names (sometimes prefixed like "mixamorig:").
+const MIXAMO_TO_VRM_BONE_MAP: Record<string, VRMHumanBoneName> = {
+  Hips: 'hips',
+  Spine: 'spine',
+  Spine1: 'chest',
+  Spine2: 'upperChest',
+  Neck: 'neck',
+  Head: 'head',
+  LeftShoulder: 'leftShoulder',
+  LeftArm: 'leftUpperArm',
+  LeftForeArm: 'leftLowerArm',
+  LeftHand: 'leftHand',
+  RightShoulder: 'rightShoulder',
+  RightArm: 'rightUpperArm',
+  RightForeArm: 'rightLowerArm',
+  RightHand: 'rightHand',
+  LeftUpLeg: 'leftUpperLeg',
+  LeftLeg: 'leftLowerLeg',
+  LeftFoot: 'leftFoot',
+  LeftToeBase: 'leftToes',
+  RightUpLeg: 'rightUpperLeg',
+  RightLeg: 'rightLowerLeg',
+  RightFoot: 'rightFoot',
+  RightToeBase: 'rightToes',
+  LeftHandThumb1: 'leftThumbProximal',
+  LeftHandThumb2: 'leftThumbIntermediate',
+  LeftHandThumb3: 'leftThumbDistal',
+  LeftHandIndex1: 'leftIndexProximal',
+  LeftHandIndex2: 'leftIndexIntermediate',
+  LeftHandIndex3: 'leftIndexDistal',
+  LeftHandMiddle1: 'leftMiddleProximal',
+  LeftHandMiddle2: 'leftMiddleIntermediate',
+  LeftHandMiddle3: 'leftMiddleDistal',
+  LeftHandRing1: 'leftRingProximal',
+  LeftHandRing2: 'leftRingIntermediate',
+  LeftHandRing3: 'leftRingDistal',
+  LeftHandPinky1: 'leftLittleProximal',
+  LeftHandPinky2: 'leftLittleIntermediate',
+  LeftHandPinky3: 'leftLittleDistal',
+  RightHandThumb1: 'rightThumbProximal',
+  RightHandThumb2: 'rightThumbIntermediate',
+  RightHandThumb3: 'rightThumbDistal',
+  RightHandIndex1: 'rightIndexProximal',
+  RightHandIndex2: 'rightIndexIntermediate',
+  RightHandIndex3: 'rightIndexDistal',
+  RightHandMiddle1: 'rightMiddleProximal',
+  RightHandMiddle2: 'rightMiddleIntermediate',
+  RightHandMiddle3: 'rightMiddleDistal',
+  RightHandRing1: 'rightRingProximal',
+  RightHandRing2: 'rightRingIntermediate',
+  RightHandRing3: 'rightRingDistal',
+  RightHandPinky1: 'rightLittleProximal',
+  RightHandPinky2: 'rightLittleIntermediate',
+  RightHandPinky3: 'rightLittleDistal',
+};
+
+const normalizeMixamoNodeName = (raw: string): string => {
+  let name = raw;
+  const slashIdx = name.lastIndexOf('/');
+  if (slashIdx >= 0) name = name.slice(slashIdx + 1);
+  name = name.replace(/^[^:]+:/, '');
+  name = name.replace(/^mixamorig/i, '');
+  name = name.replace(/^_+/, '');
+  return name;
+};
+
+// Captured pose for Thanh.glb (gltf) "floor sit, crossed legs" preset.
+// Quaternions are in local bone space and should match this specific avatar.
+const FLOOR_SIT_CROSS_LEG_POSE_GLTF = {
+  rootYOffset: -0.75,
+  boneQuaternions: {
+    Hips: [0.041219, -0.000026, 0, 0.99915],
+    Spine: [-0.033148, -0.000869, 0.000031, 0.99945],
+    Spine1: [-0.008788, -0.000597, 0.000005, 0.999961],
+    Spine2: [0.047201, 0, 0, 0.998885],
+    Neck: [0.180832, -0.000588, -0.000108, 0.983514],
+    Head: [-0.181378, -0.001417, -0.001091, 0.983412],
+
+    LeftShoulder: [0.540229, 0.44978, -0.526742, 0.477906],
+    LeftArm: [0.636794, -0.047667, 0.026554, 0.769101],
+    LeftForeArm: [0.115435, 0.212605, 0.462985, 0.852712],
+    LeftHand: [0.072539, 0.03556, 0.017738, 0.996574],
+
+    RightShoulder: [0.540225, -0.449783, 0.526739, 0.47791],
+    RightArm: [0.636794, 0.047666, -0.026554, 0.769101],
+    RightForeArm: [-0.257391, 0.100153, -0.237653, 0.931257],
+    RightHand: [0.072541, -0.035556, -0.017738, 0.996574],
+
+    LeftUpLeg: [0.168029, -0.525276, -0.808292, 0.206193],
+    LeftLeg: [-0.194537, -0.366232, -0.803412, 0.427269],
+    LeftFoot: [0.570692, -0.011798, 0.041342, 0.820038],
+    LeftToeBase: [0.268229, -0.043741, 0.01855, 0.962183],
+
+    RightUpLeg: [0.100137, 0.521137, 0.766817, 0.361081],
+    RightLeg: [-0.170548, 0.351553, 0.831304, 0.395295],
+    RightFoot: [0.570692, 0.0118, -0.041338, 0.820038],
+    RightToeBase: [0.268229, 0.043735, -0.018559, 0.962183],
+  } as Record<string, [number, number, number, number]>,
+};
+
+// ============================================================
+// Mixamo→VRM animation retargeting (riko_project style, proper quaternion conversion)
+// ============================================================
+const MIXAMO_VRM_RIG_MAP: Partial<Record<string, VRMHumanBoneName>> = {
+  mixamorigHips: VRMHumanBoneName.Hips,
+  mixamorigSpine: VRMHumanBoneName.Spine,
+  mixamorigSpine1: VRMHumanBoneName.Chest,
+  mixamorigSpine2: VRMHumanBoneName.UpperChest,
+  mixamorigNeck: VRMHumanBoneName.Neck,
+  mixamorigHead: VRMHumanBoneName.Head,
+  mixamorigLeftShoulder: VRMHumanBoneName.LeftShoulder,
+  mixamorigLeftArm: VRMHumanBoneName.LeftUpperArm,
+  mixamorigLeftForeArm: VRMHumanBoneName.LeftLowerArm,
+  mixamorigLeftHand: VRMHumanBoneName.LeftHand,
+  mixamorigLeftHandThumb1: VRMHumanBoneName.LeftThumbMetacarpal,
+  mixamorigLeftHandThumb2: VRMHumanBoneName.LeftThumbProximal,
+  mixamorigLeftHandThumb3: VRMHumanBoneName.LeftThumbDistal,
+  mixamorigLeftHandIndex1: VRMHumanBoneName.LeftIndexProximal,
+  mixamorigLeftHandIndex2: VRMHumanBoneName.LeftIndexIntermediate,
+  mixamorigLeftHandIndex3: VRMHumanBoneName.LeftIndexDistal,
+  mixamorigLeftHandMiddle1: VRMHumanBoneName.LeftMiddleProximal,
+  mixamorigLeftHandMiddle2: VRMHumanBoneName.LeftMiddleIntermediate,
+  mixamorigLeftHandMiddle3: VRMHumanBoneName.LeftMiddleDistal,
+  mixamorigLeftHandRing1: VRMHumanBoneName.LeftRingProximal,
+  mixamorigLeftHandRing2: VRMHumanBoneName.LeftRingIntermediate,
+  mixamorigLeftHandRing3: VRMHumanBoneName.LeftRingDistal,
+  mixamorigLeftHandPinky1: VRMHumanBoneName.LeftLittleProximal,
+  mixamorigLeftHandPinky2: VRMHumanBoneName.LeftLittleIntermediate,
+  mixamorigLeftHandPinky3: VRMHumanBoneName.LeftLittleDistal,
+  mixamorigRightShoulder: VRMHumanBoneName.RightShoulder,
+  mixamorigRightArm: VRMHumanBoneName.RightUpperArm,
+  mixamorigRightForeArm: VRMHumanBoneName.RightLowerArm,
+  mixamorigRightHand: VRMHumanBoneName.RightHand,
+  mixamorigRightHandThumb1: VRMHumanBoneName.RightThumbMetacarpal,
+  mixamorigRightHandThumb2: VRMHumanBoneName.RightThumbProximal,
+  mixamorigRightHandThumb3: VRMHumanBoneName.RightThumbDistal,
+  mixamorigRightHandIndex1: VRMHumanBoneName.RightIndexProximal,
+  mixamorigRightHandIndex2: VRMHumanBoneName.RightIndexIntermediate,
+  mixamorigRightHandIndex3: VRMHumanBoneName.RightIndexDistal,
+  mixamorigRightHandMiddle1: VRMHumanBoneName.RightMiddleProximal,
+  mixamorigRightHandMiddle2: VRMHumanBoneName.RightMiddleIntermediate,
+  mixamorigRightHandMiddle3: VRMHumanBoneName.RightMiddleDistal,
+  mixamorigRightHandRing1: VRMHumanBoneName.RightRingProximal,
+  mixamorigRightHandRing2: VRMHumanBoneName.RightRingIntermediate,
+  mixamorigRightHandRing3: VRMHumanBoneName.RightRingDistal,
+  mixamorigRightHandPinky1: VRMHumanBoneName.RightLittleProximal,
+  mixamorigRightHandPinky2: VRMHumanBoneName.RightLittleIntermediate,
+  mixamorigRightHandPinky3: VRMHumanBoneName.RightLittleDistal,
+  mixamorigLeftUpLeg: VRMHumanBoneName.LeftUpperLeg,
+  mixamorigLeftLeg: VRMHumanBoneName.LeftLowerLeg,
+  mixamorigLeftFoot: VRMHumanBoneName.LeftFoot,
+  mixamorigLeftToeBase: VRMHumanBoneName.LeftToes,
+  mixamorigRightUpLeg: VRMHumanBoneName.RightUpperLeg,
+  mixamorigRightLeg: VRMHumanBoneName.RightLowerLeg,
+  mixamorigRightFoot: VRMHumanBoneName.RightFoot,
+  mixamorigRightToeBase: VRMHumanBoneName.RightToes,
+};
+
+async function loadMixamoAnimForVRM(url: string, vrm: VRM): Promise<THREE.AnimationClip> {
+  const loader = new FBXLoader();
+  const asset = await new Promise<THREE.Group>((resolve, reject) => {
+    loader.load(url, resolve, undefined, reject);
+  });
+
+  const animations = (asset as any).animations as THREE.AnimationClip[];
+  const clip = THREE.AnimationClip.findByName(animations, 'mixamo.com') ?? animations[0];
+  if (!clip) throw new Error('No animation clip found in FBX');
+
+  const isVRM0 = vrm.meta?.metaVersion === '0';
+  const tracks: THREE.KeyframeTrack[] = [];
+
+  const restRotInv = new THREE.Quaternion();
+  const parentRestWorldQuat = new THREE.Quaternion();
+  const _q = new THREE.Quaternion();
+
+
+  for (const track of clip.tracks) {
+    const parts = track.name.split('.');
+    const property = parts.pop();
+    const mixamoRigName = parts.join('.');
+
+    const vrmBoneName = MIXAMO_VRM_RIG_MAP[mixamoRigName];
+    if (!vrmBoneName) continue;
+
+    const vrmNode = vrm.humanoid.getNormalizedBoneNode(vrmBoneName);
+    const mixamoNode = asset.getObjectByName(mixamoRigName);
+    if (!vrmNode || !mixamoNode) continue;
+    if (!vrmNode.name) vrmNode.name = String(vrmBoneName);
+
+    if (track instanceof THREE.QuaternionKeyframeTrack) {
+      // Skip hips rotation — Mixamo animations often bake a yaw into the hips that
+      // spins the whole character. The torso bones (spine upward) still animate fully.
+      if (vrmBoneName === VRMHumanBoneName.Hips) continue;
+
+      // Retarget: parentWorldRot * trackQuat * restWorldRotInv
+      mixamoNode.getWorldQuaternion(restRotInv).invert();
+      if (mixamoNode.parent) mixamoNode.parent.getWorldQuaternion(parentRestWorldQuat);
+      else parentRestWorldQuat.identity();
+
+      const isTrunkBone = (
+        vrmBoneName === VRMHumanBoneName.Spine ||
+        vrmBoneName === VRMHumanBoneName.Chest ||
+        vrmBoneName === VRMHumanBoneName.UpperChest ||
+        vrmBoneName === VRMHumanBoneName.LeftUpperLeg ||
+        vrmBoneName === VRMHumanBoneName.RightUpperLeg
+      );
+
+      const _euler = isTrunkBone ? new THREE.Euler() : null;
+      const values = track.values.slice();
+      for (let i = 0; i < values.length; i += 4) {
+        _q.fromArray(values, i);
+        _q.premultiply(parentRestWorldQuat).multiply(restRotInv);
+        // Strip lateral Z-roll from trunk bones — Mixamo idle weight-shifts bake a
+        // sideways tilt into spine/chest that makes the character lean left.
+        if (_euler) {
+          _euler.setFromQuaternion(_q, 'XYZ');
+          _euler.z = 0;
+          _q.setFromEuler(_euler);
+        }
+        _q.toArray(values, i);
+      }
+
+      tracks.push(new THREE.QuaternionKeyframeTrack(
+        `${vrmNode.name}.quaternion`,
+        track.times,
+        // VRM 0.x has a mirrored X axis — flip x and z components
+        isVRM0 ? values.map((v, i) => (i % 2 === 0 ? -v : v)) : values,
+      ));
+    } else if (track instanceof THREE.VectorKeyframeTrack && property === 'position') {
+      // Skip position tracks — keeping absolute hips Y causes drift when the VRM scene
+      // has an initialYshift offset (hipsScale goes negative). Rotation tracks alone are
+      // sufficient; the character stays where the user placed it.
+      continue;
+    }
+  }
+
+  if (tracks.length === 0) throw new Error(`No tracks retargeted from ${url}`);
+  return new THREE.AnimationClip('vrm-state-anim', clip.duration, tracks);
+}
+
+// ============================================================
+// VrmAnimationManager — procedural head/eye/blink state machine
+// Ported from riko_project_feb13-2026/client/animationManager.js
+// ============================================================
+class VrmAnimationManager {
+  private vrm: VRM;
+  state: 'idle' | 'listening' | 'thinking' | 'talking' = 'idle';
+
+  private stateTimer = 0;
+  private isTransitioning = false;
+  private transitionTimer = 0;
+  private movementLocked = false;
+  private movementLockTimer = 0;
+
+  private headTgt = { x: 0, y: 0, z: 0 };
+  private headCur = { x: 0, y: 0, z: 0 };
+  private headVelocity = { x: 0, y: 0, z: 0 };
+  private headTimer = 0;
+  private eyeTimer = 0;
+  private eyeLeadTimer = 0;
+  private _pendingHeadTarget: { x: number; y: number; z: number } | null = null;
+
+  eyeLookAtTarget: THREE.Object3D;
+  private eyeTgtPos = new THREE.Vector3(0, 0, 5);
+
+  private bodyTimer = 0;
+  private bodyTgt = { x: 0 };
+  private bodyCur = { x: 0 };
+
+  private blinkTimer = 0;
+  private nextBlink = 1.5;
+  private blinkVal = 0;
+
+  private idleLookingAtUser = false;
+  private idleLookAtUserTimer = 0;
+  private listeningSideLook = false;
+  private listeningSideLookTimer = 0;
+  private listeningSideDirection = 1;
+  private talkingNodPhase = 0;
+  private talkingCurrentNodFreq = 2.0;
+  private talkingCurrentNodIntensity = 0.2;
+  private talkingNextNodChange = 0;
+  private thinkingLookingAtUser = false;
+  private thinkingLookAtUserTimer = 0;
+
+  isMixamoPlaying = false;
+  isSpeaking = false;
+
+  private readonly cfg = {
+    headNod: 0.2,
+    headTurn: 0.13,
+    blinkMin: 0.5, blinkMax: 3.0, blinkSpeed: 8.0,
+    transitionLockDuration: 0.5,
+    transitionEaseSpeed: 0.08,
+    headAcceleration: 0.001,
+    headDamping: 0.85,
+    stateAcceleration: { idle: 1.0, listening: 8.0, thinking: 2.0, talking: 10.0 } as Record<string, number>,
+    stateConfig: {
+      idle: {
+        lookDuration: 3.0, lookChangeChance: 0.3,
+        headRangeX: 0.25, headRangeY: 0.75, headRangeZ: 0.18,
+        eyeRange: 7.0,
+        lookAtUserChance: 0.35, lookAtUserDurationMin: 1.5, lookAtUserDurationMax: 3.5,
+        lookAtUserEyeReset: true,
+      },
+      listening: {
+        nodIntensity: 0.35, nodCount: 2,
+        eyeRange: 5.0,
+        sideLookChance: 0.15, sideLookDurationMin: 1.0, sideLookDurationMax: 3.0,
+        sideLookHeadTurn: 0.15, sideLookEyeRange: 4.0,
+        focusOnUser: true,
+      },
+      thinking: {
+        lookDuration: 1.5, lookChangeChance: 0.35,
+        headRangeX: 0.12, headRangeY: 0.25, headRangeZ: 0.12,
+        eyeRange: 6.0, lookUpBias: 0.6,
+        eyeLeadTime: 0.1, eyeLeadAmount: 1.1, eyeHeadSync: 0.8,
+        lookAtUserChance: 0.3, lookAtUserDurationMin: 1.0, lookAtUserDurationMax: 2.0,
+      },
+      talking: {
+        nodIntensity: 0.5, nodFrequency: 1.8, nodVariation: 0.6,
+        occasionalTurn: 0.2, eyeRange: 6.0,
+        nodIntensityVariation: 0.4, nodFrequencyVariation: 0.5, nodChangeInterval: 1.5,
+        tiltChance: 0.25, tiltIntensity: 0.08,
+      },
+    },
+  };
+
+  constructor(vrm: VRM) {
+    this.vrm = vrm;
+    this.eyeLookAtTarget = new THREE.Object3D();
+    this.eyeLookAtTarget.position.set(0, 0, 5);
+    vrm.scene.add(this.eyeLookAtTarget);
+    if (vrm.lookAt) vrm.lookAt.target = this.eyeLookAtTarget;
+    this.nextBlink = this.rand(this.cfg.blinkMin, this.cfg.blinkMax);
+  }
+
+  setState(newState: 'idle' | 'listening' | 'thinking' | 'talking') {
+    if (this.state === newState) return;
+    this.state = newState;
+    this.stateTimer = 0;
+    this.isTransitioning = true;
+    this.transitionTimer = 0;
+    this.headTgt = { x: 0, y: 0, z: 0 };
+    this.eyeTgtPos.set(0, 0, 5);
+    this.headTimer = 0; this.eyeTimer = 0; this.eyeLeadTimer = 0;
+    this.idleLookingAtUser = false; this.idleLookAtUserTimer = 0;
+    this.listeningSideLook = false; this.listeningSideLookTimer = 0;
+    this.talkingNextNodChange = 0;
+    this.thinkingLookingAtUser = false; this.thinkingLookAtUserTimer = 0;
+    this._pendingHeadTarget = null;
+    this.movementLocked = false; this.movementLockTimer = 0;
+  }
+
+  private rand(min: number, max: number) { return min + Math.random() * (max - min); }
+
+  private smoothEase(cur: number, tgt: number, vel: number, acc: number, damp: number, dt: number) {
+    const nv = (vel + (tgt - cur) * acc) * damp;
+    return { value: cur + nv * dt * 60, velocity: nv };
+  }
+
+  private updateHeadWithPhysics(dt: number) {
+    const acc = this.cfg.headAcceleration * (this.cfg.stateAcceleration[this.state] ?? 1);
+    const d = this.cfg.headDamping;
+    const xr = this.smoothEase(this.headCur.x, this.headTgt.x, this.headVelocity.x, acc, d, dt);
+    const yr = this.smoothEase(this.headCur.y, this.headTgt.y, this.headVelocity.y, acc, d, dt);
+    const zr = this.smoothEase(this.headCur.z, this.headTgt.z, this.headVelocity.z, acc, d, dt);
+    this.headCur.x = xr.value; this.headVelocity.x = xr.velocity;
+    this.headCur.y = yr.value; this.headVelocity.y = yr.velocity;
+    this.headCur.z = zr.value; this.headVelocity.z = zr.velocity;
+  }
+
+  private centerHead(ease = 0.04): boolean {
+    this.headCur.x += (0 - this.headCur.x) * ease;
+    this.headCur.y += (0 - this.headCur.y) * ease;
+    this.headCur.z += (0 - this.headCur.z) * ease;
+    this.headVelocity.x *= 0.9; this.headVelocity.y *= 0.9; this.headVelocity.z *= 0.9;
+    this.eyeTgtPos.set(0, 0, 5);
+    this.eyeLookAtTarget.position.lerp(this.eyeTgtPos, ease * 1.5);
+    const t = 0.02;
+    return Math.abs(this.headCur.x) < t && Math.abs(this.headCur.y) < t && Math.abs(this.headCur.z) < t;
+  }
+
+  private updateIdleState(dt: number, cfg: typeof this.cfg.stateConfig.idle) {
+    this.headTimer += dt; this.eyeTimer += dt;
+    if (this.idleLookingAtUser) {
+      this.idleLookAtUserTimer -= dt;
+      if (this.idleLookAtUserTimer <= 0) { this.idleLookingAtUser = false; this.headTimer = 0; }
+    } else if (this.headTimer > cfg.lookDuration) {
+      if (Math.random() < cfg.lookAtUserChance) {
+        this.idleLookingAtUser = true;
+        this.idleLookAtUserTimer = this.rand(cfg.lookAtUserDurationMin, cfg.lookAtUserDurationMax);
+        this.headTgt = { x: 0, y: 0, z: 0 };
+        if (cfg.lookAtUserEyeReset) this.eyeTgtPos.set(0, 0, 5);
+        this.headTimer = 0;
+      } else if (Math.random() < cfg.lookChangeChance) {
+        const angle = Math.random() * Math.PI * 2;
+        const rm = 0.6 + Math.random() * 0.4;
+        this.headTgt.x = Math.sin(angle) * cfg.headRangeX * rm;
+        this.headTgt.y = Math.cos(angle) * cfg.headRangeY * rm;
+        this.headTgt.z = this.rand(-cfg.headRangeZ, cfg.headRangeZ) * rm;
+        this.eyeTgtPos.x = Math.sin(angle) * cfg.eyeRange;
+        this.eyeTgtPos.y = Math.cos(angle) * cfg.eyeRange * 0.4;
+        this.eyeTgtPos.z = 5 + Math.cos(angle) * 1.5;
+        this.headTimer = 0;
+      }
+    }
+    this.updateHeadWithPhysics(dt);
+    this.eyeLookAtTarget.position.lerp(this.eyeTgtPos, 0.025);
+  }
+
+  private updateListeningState(dt: number, cfg: typeof this.cfg.stateConfig.listening) {
+    this.headTimer += dt; this.eyeTimer += dt;
+    if (this.listeningSideLook) {
+      this.listeningSideLookTimer -= dt;
+      if (this.listeningSideLookTimer <= 0) {
+        this.listeningSideLook = false;
+        this.headTgt.y = 0;
+        this.eyeTgtPos.set(0, 0, 5);
+      }
+    } else if (Math.random() < cfg.sideLookChance * dt) {
+      this.listeningSideLook = true;
+      this.listeningSideLookTimer = this.rand(cfg.sideLookDurationMin, cfg.sideLookDurationMax);
+      this.listeningSideDirection = Math.random() < 0.5 ? -1 : 1;
+      this.headTgt.y = cfg.sideLookHeadTurn * this.listeningSideDirection;
+      this.eyeTgtPos.x = cfg.sideLookEyeRange * this.listeningSideDirection;
+      this.eyeTgtPos.y = 0; this.eyeTgtPos.z = 5;
+    }
+    const nodCycle = 2.5;
+    const cyclePhase = (this.stateTimer % nodCycle) / nodCycle;
+    if (!this.listeningSideLook) {
+      if (cyclePhase < 0.4) {
+        const nodPhase = (cyclePhase / 0.4) * Math.PI * 2 * cfg.nodCount;
+        this.headTgt.x = Math.sin(nodPhase) * this.cfg.headNod * cfg.nodIntensity;
+      } else {
+        this.headTgt.x *= 0.9;
+      }
+      if (cfg.focusOnUser && this.eyeTimer > 2.0) {
+        this.eyeTgtPos.x = this.rand(-1, 1); this.eyeTgtPos.y = this.rand(-0.5, 0.5); this.eyeTgtPos.z = 5;
+        this.eyeTimer = 0;
+      }
+    }
+    this.updateHeadWithPhysics(dt);
+    this.eyeLookAtTarget.position.lerp(this.eyeTgtPos, 0.03);
+  }
+
+  private updateThinkingState(dt: number, cfg: typeof this.cfg.stateConfig.thinking) {
+    this.headTimer += dt; this.eyeTimer += dt; this.eyeLeadTimer += dt;
+    if (this.thinkingLookingAtUser) {
+      this.thinkingLookAtUserTimer -= dt;
+      if (this.thinkingLookAtUserTimer <= 0) { this.thinkingLookingAtUser = false; this.headTimer = 0; }
+    } else if (this.headTimer > cfg.lookDuration) {
+      if (Math.random() < cfg.lookAtUserChance) {
+        this.thinkingLookingAtUser = true;
+        this.thinkingLookAtUserTimer = this.rand(cfg.lookAtUserDurationMin, cfg.lookAtUserDurationMax);
+        this.eyeTgtPos.set(0, 0, 5);
+        this._pendingHeadTarget = { x: 0, y: 0, z: 0 };
+        this.eyeLeadTimer = 0; this.headTimer = 0;
+      } else if (Math.random() < cfg.lookChangeChance) {
+        const angle = (Math.random() * Math.PI * 1.6) - (Math.PI * 0.3);
+        const upBias = cfg.lookUpBias * 0.25;
+        const eyeSync = Math.random() < cfg.eyeHeadSync;
+        if (eyeSync) {
+          this.eyeTgtPos.x = Math.sin(angle) * cfg.eyeRange * cfg.eyeLeadAmount;
+          this.eyeTgtPos.y = (cfg.eyeRange * 0.6 + upBias * 10) * cfg.eyeLeadAmount;
+          this.eyeTgtPos.z = 4;
+        } else {
+          const da = Math.random() * Math.PI * 2;
+          this.eyeTgtPos.x = Math.sin(da) * cfg.eyeRange * 0.6;
+          this.eyeTgtPos.y = cfg.eyeRange * 0.4; this.eyeTgtPos.z = 5;
+        }
+        this._pendingHeadTarget = {
+          x: Math.sin(angle) * cfg.headRangeX + upBias,
+          y: Math.cos(angle) * cfg.headRangeY,
+          z: this.rand(-cfg.headRangeZ, cfg.headRangeZ),
+        };
+        this.eyeLeadTimer = 0; this.headTimer = 0;
+      }
+    }
+    if (this._pendingHeadTarget && this.eyeLeadTimer >= cfg.eyeLeadTime) {
+      this.headTgt.x = this._pendingHeadTarget.x;
+      this.headTgt.y = this._pendingHeadTarget.y;
+      this.headTgt.z = this._pendingHeadTarget.z;
+      this._pendingHeadTarget = null;
+    }
+    this.updateHeadWithPhysics(dt);
+    this.eyeLookAtTarget.position.lerp(this.eyeTgtPos, 0.04);
+  }
+
+  private updateTalkingState(dt: number, cfg: typeof this.cfg.stateConfig.talking) {
+    this.headTimer += dt; this.eyeTimer += dt; this.talkingNodPhase += dt;
+    if (this.stateTimer > this.talkingNextNodChange) {
+      this.talkingCurrentNodFreq = cfg.nodFrequency * (1 + (Math.random() * 2 - 1) * cfg.nodFrequencyVariation);
+      this.talkingCurrentNodIntensity = cfg.nodIntensity * (1 + (Math.random() * 2 - 1) * cfg.nodIntensityVariation);
+      this.talkingNextNodChange = this.stateTimer + cfg.nodChangeInterval * (0.7 + Math.random() * 0.6);
+    }
+    if (Math.random() > 0.15) {
+      const nodPhase = (this.talkingNodPhase * this.talkingCurrentNodFreq * Math.PI * 2) % (Math.PI * 2);
+      this.headTgt.x = Math.sin(nodPhase) * (0.7 + Math.random() * 0.3) * this.talkingCurrentNodIntensity * cfg.nodVariation * this.cfg.headNod;
+    } else {
+      this.headTgt.x *= 0.9;
+    }
+    if (Math.random() < cfg.tiltChance * dt) {
+      this.headTgt.z = cfg.tiltIntensity * (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 0.4);
+    }
+    if (Math.random() < cfg.occasionalTurn * dt * 0.5) {
+      this.headTgt.y = this.rand(-this.cfg.headTurn * 0.15, this.cfg.headTurn * 0.15);
+    }
+    this.headTgt.y *= 0.95; this.headTgt.z *= 0.94;
+    if (this.eyeTimer > 2.5) {
+      const s = Math.random() * 0.4 - 0.2;
+      this.eyeTgtPos.x = Math.sin(s) * cfg.eyeRange * 0.3;
+      this.eyeTgtPos.y = this.rand(-1, 1); this.eyeTgtPos.z = 5;
+      this.eyeTimer = 0;
+    }
+    this.updateHeadWithPhysics(dt);
+    this.eyeLookAtTarget.position.lerp(this.eyeTgtPos, 0.025);
+  }
+
+  update(dt: number) {
+    if (!this.vrm?.expressionManager) return;
+
+    // Blinking — always runs
+    this.blinkTimer += dt;
+    if (this.blinkTimer > this.nextBlink) {
+      this.blinkTimer = 0;
+      this.nextBlink = this.rand(this.cfg.blinkMin, this.cfg.blinkMax);
+    }
+    this.blinkVal += (this.blinkTimer < 0.1 ? dt : -dt) * this.cfg.blinkSpeed;
+    this.blinkVal = Math.max(0, Math.min(1, this.blinkVal));
+    this.vrm.expressionManager.setValue('blink', this.blinkVal);
+
+    // Transition / lock phases
+    if (this.isTransitioning) {
+      this.transitionTimer += dt;
+      const centered = this.centerHead(this.cfg.transitionEaseSpeed);
+      if (centered && this.transitionTimer >= 0.4) {
+        this.isTransitioning = false;
+        this.movementLocked = true;
+        this.movementLockTimer = 0;
+        this.headVelocity = { x: 0, y: 0, z: 0 };
+      }
+    } else if (this.movementLocked) {
+      this.movementLockTimer += dt;
+      this.headTgt = { x: 0, y: 0, z: 0 };
+      this.updateHeadWithPhysics(dt);
+      this.eyeTgtPos.set(0, 0, 5);
+      this.eyeLookAtTarget.position.lerp(this.eyeTgtPos, 0.05);
+      if (this.movementLockTimer >= this.cfg.transitionLockDuration) this.movementLocked = false;
+    } else {
+      const sc = this.cfg.stateConfig as Record<string, any>;
+      const stateCfg = sc[this.state];
+      if (this.state === 'idle') this.updateIdleState(dt, stateCfg);
+      else if (this.state === 'listening') this.updateListeningState(dt, stateCfg);
+      else if (this.state === 'thinking') this.updateThinkingState(dt, stateCfg);
+      else if (this.state === 'talking') this.updateTalkingState(dt, stateCfg);
+    }
+    this.stateTimer += dt;
+
+    // Apply head/neck — always, even when Mixamo plays (overrides FBX head tracks)
+    const neck = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Neck);
+    if (neck) neck.rotation.set(this.headCur.x * 0.4, this.headCur.y * 0.5, this.headCur.z * 0.5);
+    const head = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Head);
+    if (head) head.rotation.set(this.headCur.x * 0.6, this.headCur.y * 0.5, this.headCur.z * 0.5);
+
+    // Skip body/arms when FBX animation is handling them
+    if (this.isMixamoPlaying) return;
+
+    // Body sway
+    this.bodyTimer += dt;
+    if (this.bodyTimer > 2.8) { this.bodyTgt.x = this.rand(-0.05, 0.05); this.bodyTimer = 0; }
+    this.bodyCur.x += (this.bodyTgt.x - this.bodyCur.x) * 0.01;
+    const spine = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Spine);
+    if (spine) spine.rotation.x = this.bodyCur.x;
+
+    // Arms-down default
+    const la = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.LeftUpperArm);
+    const ra = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.RightUpperArm);
+    if (la) la.rotation.z = -1.2;
+    if (ra) ra.rotation.z = 1.2;
+  }
+
+  destroy() {
+    if (this.vrm.scene.children.includes(this.eyeLookAtTarget)) {
+      this.vrm.scene.remove(this.eyeLookAtTarget);
+    }
+    if (this.vrm.lookAt) this.vrm.lookAt.target = undefined as any;
+  }
+}
+
 export const VrmViewer = memo(() => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -92,12 +688,36 @@ export const VrmViewer = memo(() => {
   const requestRef = useRef<number>();
   const vrmRef = useRef<VRM | null>(null);
   const rootOffsetRef = useRef<THREE.Vector3 | null>(null);
+  const modelBasePositionRef = useRef<THREE.Vector3 | null>(null);
   const glbModelRef = useRef<THREE.Object3D | null>(null);
   const glbBonesRef = useRef<Map<string, THREE.Bone>>(new Map());
+  // Index for "normalized" lookups (case-insensitive, strips common Mixamo prefixes).
+  // This avoids situations where a model has bones named "mixamorig:Hips" while the
+  // animation track references "Hips" (or vice versa).
+  const glbBonesNormalizedRef = useRef<Map<string, THREE.Bone>>(new Map());
+  // Used for debugging and to ensure we target the bones that actually drive the mesh.
+  const glbSkinnedMeshesRef = useRef<THREE.SkinnedMesh[]>([]);
+  const skeletonHelperRef = useRef<THREE.SkeletonHelper | null>(null);
+  const initialBoneTransformsRef = useRef<Map<string, { q: THREE.Quaternion; p: THREE.Vector3 }>>(new Map());
   
   // Animation Refs
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const currentActionRef = useRef<THREE.AnimationAction | null>(null);
+  const loadedClipsRef = useRef<THREE.AnimationClip[]>([]);
+  const [clipNames, setClipNames] = useState<string[]>([]);
+  const [selectedClipName, setSelectedClipName] = useState<string>('');
+  const [isProceduralPlaying, setIsProceduralPlaying] = useState(false);
+  const proceduralActiveRef = useRef(false);
+  const proceduralStartRef = useRef(0);
+  const proceduralBaseQuatRef = useRef<Map<string, THREE.Quaternion>>(new Map());
+  const proceduralNodesRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  const [activePoseProfile, setActivePoseProfile] = useState<string>('');
+
+  // Animation Manager refs
+  const animMgrRef = useRef<VrmAnimationManager | null>(null);
+  const currentStateAnimUrlRef = useRef<string>('');
+  const stateAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isVrmaPlayingRef = useRef(false);
 
   const { modelInfo } = useLive2DConfig();
   const { mode } = useMode();
@@ -107,7 +727,20 @@ export const VrmViewer = memo(() => {
   // --- Pose Fix States ---
   const [invertLegs, setInvertLegs] = useState(true);
   const [flipHips, setFlipHips] = useState(true);
+  // This is used as a global "an animation is currently driving the rig"
+  // flag (VRMA, embedded GLB clips, uploaded GLB clips).
   const [isVrmaPlaying, setIsVrmaPlaying] = useState(false);
+  const isAnyAnimationPlaying = isVrmaPlaying || isProceduralPlaying;
+
+  // --- Rig Debug UI (bone list + sliders) ---
+  const [rigBones, setRigBones] = useState<string[]>([]);
+  const [rigSearch, setRigSearch] = useState<string>('');
+  const [selectedBone, setSelectedBone] = useState<string>('');
+  const [rigRotDeg, setRigRotDeg] = useState<Vec3>({ x: 0, y: 0, z: 0 });
+  const [rigPos, setRigPos] = useState<Vec3>({ x: 0, y: 0, z: 0 });
+  const [showSkeleton, setShowSkeleton] = useState(false);
+  const [wireframe, setWireframe] = useState(false);
+  const [rigModelStamp, setRigModelStamp] = useState(0);
 
   const normalizedConfig = useMemo(() => {
     if (!modelInfo) return null;
@@ -257,6 +890,684 @@ export const VrmViewer = memo(() => {
       node.updateMatrixWorld(true);
     });
   }, [flipHips, invertLegs, isVrmaPlaying]);
+
+  const getCurrentModelRoot = useCallback(() => (
+    vrmRef.current?.scene ?? glbModelRef.current
+  ), []);
+
+  type LogicalBone =
+    | 'hips'
+    | 'spine'
+    | 'chest'
+    | 'upperChest'
+    | 'neck'
+    | 'head'
+    | 'leftShoulder'
+    | 'leftUpperArm'
+    | 'leftLowerArm'
+    | 'leftHand'
+    | 'rightShoulder'
+    | 'rightUpperArm'
+    | 'rightLowerArm'
+    | 'rightHand'
+    | 'leftUpperLeg'
+    | 'leftLowerLeg'
+    | 'leftFoot'
+    | 'rightUpperLeg'
+    | 'rightLowerLeg'
+    | 'rightFoot';
+
+  const getLogicalBoneNode = useCallback((key: LogicalBone): THREE.Object3D | null => {
+    const vrm = vrmRef.current;
+    if (vrm?.humanoid) {
+      const map: Partial<Record<LogicalBone, VRMHumanBoneName>> = {
+        hips: VRMHumanBoneName.Hips,
+        spine: VRMHumanBoneName.Spine,
+        chest: VRMHumanBoneName.Chest,
+        upperChest: VRMHumanBoneName.UpperChest,
+        neck: VRMHumanBoneName.Neck,
+        head: VRMHumanBoneName.Head,
+        leftShoulder: VRMHumanBoneName.LeftShoulder,
+        leftUpperArm: VRMHumanBoneName.LeftUpperArm,
+        leftLowerArm: VRMHumanBoneName.LeftLowerArm,
+        leftHand: VRMHumanBoneName.LeftHand,
+        rightShoulder: VRMHumanBoneName.RightShoulder,
+        rightUpperArm: VRMHumanBoneName.RightUpperArm,
+        rightLowerArm: VRMHumanBoneName.RightLowerArm,
+        rightHand: VRMHumanBoneName.RightHand,
+        leftUpperLeg: VRMHumanBoneName.LeftUpperLeg,
+        leftLowerLeg: VRMHumanBoneName.LeftLowerLeg,
+        leftFoot: VRMHumanBoneName.LeftFoot,
+        rightUpperLeg: VRMHumanBoneName.RightUpperLeg,
+        rightLowerLeg: VRMHumanBoneName.RightLowerLeg,
+        rightFoot: VRMHumanBoneName.RightFoot,
+      };
+      const vrmKey = map[key];
+      return vrmKey ? (vrm.humanoid.getNormalizedBoneNode(vrmKey) ?? null) : null;
+    }
+
+    // GLB: prefer Mixamo-style normalized names.
+    const get = (name: string) => glbBonesNormalizedRef.current.get(name.toLowerCase()) ?? null;
+    const glbMap: Partial<Record<LogicalBone, string>> = {
+      hips: 'Hips',
+      spine: 'Spine',
+      chest: 'Spine1',
+      upperChest: 'Spine2',
+      neck: 'Neck',
+      head: 'Head',
+      leftShoulder: 'LeftShoulder',
+      leftUpperArm: 'LeftArm',
+      leftLowerArm: 'LeftForeArm',
+      leftHand: 'LeftHand',
+      rightShoulder: 'RightShoulder',
+      rightUpperArm: 'RightArm',
+      rightLowerArm: 'RightForeArm',
+      rightHand: 'RightHand',
+      leftUpperLeg: 'LeftUpLeg',
+      leftLowerLeg: 'LeftLeg',
+      leftFoot: 'LeftFoot',
+      rightUpperLeg: 'RightUpLeg',
+      rightLowerLeg: 'RightLeg',
+      rightFoot: 'RightFoot',
+    };
+    const glbName = glbMap[key];
+    return glbName ? get(glbName) : null;
+  }, []);
+
+  const getBoneNode = useCallback((boneKey: string): THREE.Object3D | null => {
+    const vrm = vrmRef.current;
+    if (vrm?.humanoid) {
+      return vrm.humanoid.getNormalizedBoneNode(boneKey as VRMHumanBoneName) ?? null;
+    }
+    return glbBonesRef.current.get(boneKey) ?? null;
+  }, []);
+
+  const updateRigStateFromBone = useCallback((boneKey: string) => {
+    const node = getBoneNode(boneKey);
+    if (!node) return;
+    setRigRotDeg({
+      x: THREE.MathUtils.radToDeg(node.rotation.x),
+      y: THREE.MathUtils.radToDeg(node.rotation.y),
+      z: THREE.MathUtils.radToDeg(node.rotation.z),
+    });
+    setRigPos({
+      x: node.position.x,
+      y: node.position.y,
+      z: node.position.z,
+    });
+  }, [getBoneNode]);
+
+  const applyRigToBone = useCallback((boneKey: string, rot: Vec3, pos: Vec3) => {
+    const node = getBoneNode(boneKey);
+    if (!node) return;
+    node.rotation.set(
+      THREE.MathUtils.degToRad(rot.x),
+      THREE.MathUtils.degToRad(rot.y),
+      THREE.MathUtils.degToRad(rot.z),
+    );
+    node.position.set(pos.x, pos.y, pos.z);
+    node.updateMatrixWorld(true);
+  }, [getBoneNode]);
+
+  const resetBone = useCallback((boneKey: string) => {
+    const node = getBoneNode(boneKey);
+    const initial = initialBoneTransformsRef.current.get(boneKey);
+    if (!node || !initial) return;
+    node.quaternion.copy(initial.q);
+    node.position.copy(initial.p);
+    node.updateMatrixWorld(true);
+    updateRigStateFromBone(boneKey);
+  }, [getBoneNode, updateRigStateFromBone]);
+
+  const resetAllBones = useCallback(() => {
+    for (const [boneKey, initial] of initialBoneTransformsRef.current.entries()) {
+      const node = getBoneNode(boneKey);
+      if (!node) continue;
+      node.quaternion.copy(initial.q);
+      node.position.copy(initial.p);
+      node.updateMatrixWorld(true);
+    }
+    if (selectedBone) updateRigStateFromBone(selectedBone);
+  }, [getBoneNode, selectedBone, updateRigStateFromBone]);
+
+  const resetModelRootPosition = useCallback(() => {
+    const root = getCurrentModelRoot();
+    if (!root || !modelBasePositionRef.current) return;
+    root.position.copy(modelBasePositionRef.current);
+    root.updateMatrixWorld(true);
+  }, [getCurrentModelRoot]);
+
+  const copyCurrentPoseToClipboard = useCallback(async () => {
+    const root = getCurrentModelRoot();
+    if (!root) {
+      toaster.create({
+        title: 'No model loaded',
+        description: 'Load a model before copying pose.',
+        type: 'error',
+        duration: 2500,
+      });
+      return;
+    }
+
+    const bones: Array<{
+      name: string;
+      quaternion: [number, number, number, number];
+      position: [number, number, number];
+    }> = [];
+
+    // Use current rig list for stable ordering and to avoid dumping unrelated scene nodes.
+    for (const boneKey of rigBones) {
+      const node = getBoneNode(boneKey);
+      if (!node) continue;
+      bones.push({
+        name: boneKey,
+        quaternion: [
+          Number(node.quaternion.x.toFixed(6)),
+          Number(node.quaternion.y.toFixed(6)),
+          Number(node.quaternion.z.toFixed(6)),
+          Number(node.quaternion.w.toFixed(6)),
+        ],
+        position: [
+          Number(node.position.x.toFixed(6)),
+          Number(node.position.y.toFixed(6)),
+          Number(node.position.z.toFixed(6)),
+        ],
+      });
+    }
+
+    const payload = {
+      kind: 'vtuber_pose_v1',
+      modelUrl: normalizedConfig?.url ?? modelInfo?.url ?? '',
+      activePoseProfile,
+      root: {
+        position: [
+          Number(root.position.x.toFixed(6)),
+          Number(root.position.y.toFixed(6)),
+          Number(root.position.z.toFixed(6)),
+        ] as [number, number, number],
+        rotationQuaternion: [
+          Number(root.quaternion.x.toFixed(6)),
+          Number(root.quaternion.y.toFixed(6)),
+          Number(root.quaternion.z.toFixed(6)),
+          Number(root.quaternion.w.toFixed(6)),
+        ] as [number, number, number, number],
+      },
+      bones,
+    };
+
+    const text = JSON.stringify(payload, null, 2);
+
+    try {
+      await navigator.clipboard.writeText(text);
+      toaster.create({
+        title: 'Pose copied',
+        description: `Copied ${bones.length} joints to clipboard.`,
+        type: 'success',
+        duration: 2500,
+      });
+    } catch (e) {
+      // Fallback for environments where clipboard API is unavailable.
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (!ok) throw new Error('execCommand copy failed');
+        toaster.create({
+          title: 'Pose copied',
+          description: `Copied ${bones.length} joints to clipboard.`,
+          type: 'success',
+          duration: 2500,
+        });
+      } catch (e2) {
+        console.error('[VrmViewer] Copy pose failed:', e, e2);
+        toaster.create({
+          title: 'Copy failed',
+          description: 'Clipboard access was blocked. Check browser permissions.',
+          type: 'error',
+          duration: 3500,
+        });
+      }
+    }
+  }, [activePoseProfile, getBoneNode, getCurrentModelRoot, modelInfo?.url, normalizedConfig?.url, rigBones]);
+
+  const poseIdleActiveRef = useRef(false);
+  const poseIdleStartRef = useRef(0);
+  const poseIdleBaseQuatRef = useRef<Map<LogicalBone, THREE.Quaternion>>(new Map());
+  const poseIdleNodesRef = useRef<Map<LogicalBone, THREE.Object3D>>(new Map());
+
+  const stopPoseIdle = useCallback(() => {
+    poseIdleActiveRef.current = false;
+    // Restore base quaternions captured at pose-apply time.
+    for (const [key, node] of poseIdleNodesRef.current.entries()) {
+      const base = poseIdleBaseQuatRef.current.get(key);
+      if (!base) continue;
+      node.quaternion.copy(base);
+      node.updateMatrixWorld(true);
+    }
+    poseIdleNodesRef.current.clear();
+    poseIdleBaseQuatRef.current.clear();
+  }, []);
+
+  const startPoseIdle = useCallback((keys: LogicalBone[]) => {
+    stopPoseIdle();
+    const nodes = new Map<LogicalBone, THREE.Object3D>();
+    const bases = new Map<LogicalBone, THREE.Quaternion>();
+    for (const key of keys) {
+      const node = getLogicalBoneNode(key);
+      if (!node) continue;
+      nodes.set(key, node);
+      bases.set(key, node.quaternion.clone());
+    }
+    if (nodes.size === 0) return;
+    poseIdleNodesRef.current = nodes;
+    poseIdleBaseQuatRef.current = bases;
+    poseIdleStartRef.current = performance.now() / 1000;
+    poseIdleActiveRef.current = true;
+  }, [getLogicalBoneNode, stopPoseIdle]);
+
+  useEffect(() => {
+    if (!selectedBone) return;
+    updateRigStateFromBone(selectedBone);
+  }, [selectedBone, rigModelStamp, updateRigStateFromBone]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    if (skeletonHelperRef.current) {
+      scene.remove(skeletonHelperRef.current);
+      skeletonHelperRef.current = null;
+    }
+
+    if (!showSkeleton) return;
+
+    const root = getCurrentModelRoot();
+    if (!root) return;
+
+    const helper = new THREE.SkeletonHelper(root);
+    scene.add(helper);
+    skeletonHelperRef.current = helper;
+
+    return () => {
+      if (skeletonHelperRef.current) {
+        scene.remove(skeletonHelperRef.current);
+        skeletonHelperRef.current = null;
+      }
+    };
+  }, [getCurrentModelRoot, rigModelStamp, showSkeleton]);
+
+  useEffect(() => {
+    const root = getCurrentModelRoot();
+    if (!root) return;
+    root.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) return;
+      const mesh = obj as THREE.Mesh;
+      const apply = (mat: THREE.Material) => {
+        if ('wireframe' in mat) (mat as any).wireframe = wireframe;
+      };
+      if (Array.isArray(mesh.material)) mesh.material.forEach(apply);
+      else if (mesh.material) apply(mesh.material);
+    });
+  }, [getCurrentModelRoot, rigModelStamp, wireframe]);
+
+  const playClipOnCurrentModel = useCallback((clip: THREE.AnimationClip) => {
+    const vrmScene = vrmRef.current?.scene ?? null;
+    const glbRoot = glbModelRef.current ?? null;
+
+    // For GLBs, prefer a SkinnedMesh as the mixer root so `.bones[Name]` bindings work
+    // even if bones are not parented under the scene graph in a straightforward way.
+    const mixerRoot: THREE.Object3D | null = vrmScene
+      ?? glbSkinnedMeshesRef.current[0]
+      ?? glbRoot;
+
+    if (!mixerRoot) return;
+    if (mixerRef.current) mixerRef.current.stopAllAction();
+    const mixer = new THREE.AnimationMixer(mixerRoot);
+    mixerRef.current = mixer;
+    const action = mixer.clipAction(clip);
+    action.reset().play();
+    currentActionRef.current = action;
+    setIsVrmaPlaying(true);
+  }, []);
+
+  const rebuildGlbBoneIndices = useCallback((root: THREE.Object3D) => {
+    const bonesByName = new Map<string, THREE.Bone>();
+    const bonesByNorm = new Map<string, THREE.Bone>();
+    const skinnedMeshes: THREE.SkinnedMesh[] = [];
+
+    root.traverse((obj: THREE.Object3D) => {
+      // @ts-ignore - runtime guard
+      if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
+        skinnedMeshes.push(obj as unknown as THREE.SkinnedMesh);
+      }
+    });
+
+    const addBone = (bone: THREE.Bone) => {
+      if (!bone?.name) return;
+      if (!bonesByName.has(bone.name)) bonesByName.set(bone.name, bone);
+      const norm = normalizeMixamoNodeName(bone.name).toLowerCase();
+      if (!bonesByNorm.has(norm)) bonesByNorm.set(norm, bone);
+    };
+
+    // Prefer bones from actual SkinnedMesh skeletons. Traversing "all bones in the scene"
+    // can pick up duplicates or unused armatures that don't drive the mesh.
+    let added = 0;
+    for (const mesh of skinnedMeshes) {
+      const skeleton = (mesh as any).skeleton as THREE.Skeleton | undefined;
+      if (!skeleton?.bones) continue;
+      for (const bone of skeleton.bones) {
+        addBone(bone);
+        added += 1;
+      }
+    }
+
+    if (added === 0) {
+      root.traverse((obj: THREE.Object3D) => {
+        if ((obj as THREE.Bone).isBone) addBone(obj as THREE.Bone);
+      });
+    }
+
+    glbSkinnedMeshesRef.current = skinnedMeshes;
+    glbBonesRef.current.clear();
+    glbBonesNormalizedRef.current.clear();
+    for (const [k, v] of bonesByName.entries()) glbBonesRef.current.set(k, v);
+    for (const [k, v] of bonesByNorm.entries()) glbBonesNormalizedRef.current.set(k, v);
+
+    if (skinnedMeshes.length === 0) {
+      console.warn('[VrmViewer] This GLB has no SkinnedMesh. Bone animations may not affect the mesh (no skinning).');
+    } else {
+      console.log('[VrmViewer] GLB SkinnedMesh count:', skinnedMeshes.length, 'indexed bones:', bonesByName.size);
+    }
+  }, []);
+
+  const retargetMixamoClipToCurrentModel = useCallback((clip: THREE.AnimationClip): THREE.AnimationClip | null => {
+    const vrm = vrmRef.current;
+    const isVRM = Boolean(vrm?.humanoid);
+    const tracks: THREE.KeyframeTrack[] = [];
+
+    for (const track of clip.tracks) {
+      const parts = track.name.split('.');
+      const property = parts.pop();
+      if (!property) continue;
+      const rawNode = parts.join('.');
+      const nodeName = normalizeMixamoNodeName(rawNode);
+
+      let targetNode: THREE.Object3D | null = null;
+      if (isVRM) {
+        const vrmBone = MIXAMO_TO_VRM_BONE_MAP[nodeName];
+        if (vrmBone) {
+          targetNode = vrm?.humanoid?.getNormalizedBoneNode(vrmBone) ?? null;
+        }
+      } else {
+        const nodeNameLower = nodeName.toLowerCase();
+        targetNode = glbBonesRef.current.get(nodeName)
+          ?? glbBonesRef.current.get(`mixamorig:${nodeName}`)
+          ?? glbBonesRef.current.get(`mixamorig${nodeName}`)
+          ?? glbBonesNormalizedRef.current.get(nodeNameLower)
+          ?? null;
+      }
+
+      if (!targetNode) continue;
+      // For GLB skinned meshes, we bind via `.bones[BoneName].prop` so PropertyBinding uses `root.skeleton`.
+      // This avoids subtle "found a Bone object but it's not the one driving the mesh" cases.
+      const isGLB = !isVRM;
+      const targetBoneName = (targetNode as any).isBone ? (targetNode as THREE.Bone).name : targetNode.name;
+      if (!targetBoneName || targetBoneName.trim().length === 0) continue;
+      const targetPathPrefix = isGLB
+        ? `.bones[${targetBoneName}]`
+        : (targetNode.uuid); // VRM: UUID binding is fine (bones are always in the VRM scene graph).
+
+      // Only retarget transform tracks. Avoid material/morph/etc. tracks that can make the model disappear.
+      // Also skip scale tracks (some FBX exports include non-1 scales that can collapse the mesh).
+      if (property !== 'quaternion' && property !== 'rotation' && property !== 'position') {
+        continue;
+      }
+      if (property === 'scale') {
+        continue;
+      }
+
+      // Mixamo FBX can provide either quaternion tracks or Euler rotation tracks.
+      if (property === 'rotation' && (track as any).ValueTypeName === 'vector') {
+        const times = track.times;
+        const values = track.values;
+        const count = Math.floor(values.length / 3);
+        const qValues = new Float32Array(count * 4);
+        const euler = new THREE.Euler(0, 0, 0, 'XYZ');
+        const q = new THREE.Quaternion();
+        for (let i = 0; i < count; i += 1) {
+          euler.set(values[i * 3], values[i * 3 + 1], values[i * 3 + 2], 'XYZ');
+          q.setFromEuler(euler);
+          qValues[i * 4] = q.x;
+          qValues[i * 4 + 1] = q.y;
+          qValues[i * 4 + 2] = q.z;
+          qValues[i * 4 + 3] = q.w;
+        }
+        tracks.push(new THREE.QuaternionKeyframeTrack(
+          `${targetPathPrefix}.quaternion`,
+          times,
+          qValues,
+        ));
+        continue;
+      }
+
+      // Remove Mixamo "root motion" by default so the avatar doesn't walk out of frame.
+      // Keep hip Y motion (bobbing), zero out hip X/Z translation relative to the first frame.
+      if (property === 'position') {
+        const isHipsTrack = normalizeMixamoNodeName(nodeName).toLowerCase() === 'hips'
+          || normalizeMixamoNodeName(targetBoneName).toLowerCase() === 'hips'
+          || /hips/i.test(targetBoneName);
+        if (!isHipsTrack) continue;
+        const values = track.values;
+        const count = Math.floor(values.length / 3);
+        if (count <= 0) continue;
+        const baseX = values[0];
+        const baseY = values[1];
+        const baseZ = values[2];
+        const posValues = new Float32Array(count * 3);
+        for (let i = 0; i < count; i += 1) {
+          const x = values[i * 3];
+          const y = values[i * 3 + 1];
+          const z = values[i * 3 + 2];
+          posValues[i * 3] = x - baseX;
+          posValues[i * 3 + 1] = y - baseY;
+          posValues[i * 3 + 2] = z - baseZ;
+        }
+        tracks.push(new THREE.VectorKeyframeTrack(
+          `${targetPathPrefix}.position`,
+          track.times,
+          posValues,
+        ));
+        continue;
+      }
+
+      // @ts-ignore - track type constructors are not nicely typed.
+      const TypedTrack = track.constructor;
+      const newTrack = new TypedTrack(
+        `${targetPathPrefix}.${property}`,
+        track.times,
+        track.values,
+      );
+      tracks.push(newTrack);
+    }
+
+    if (tracks.length === 0) return null;
+    return new THREE.AnimationClip(clip.name || 'mixamo', clip.duration, tracks);
+  }, []);
+
+  const playMixamoFbxFromUrl = useCallback((url: string) => {
+    const loader = new FBXLoader();
+    loader.load(
+      url,
+      (fbx: THREE.Group) => {
+        const clip = (fbx as any).animations?.[0] as THREE.AnimationClip | undefined;
+        if (!clip) {
+          console.warn('[VrmViewer] No animation found in FBX');
+          return;
+        }
+        const vrm = vrmRef.current;
+        const isVRM = Boolean(vrm?.humanoid);
+
+        // Prefer SkeletonUtils.retargetClip for GLB skinned meshes. This is the approach used in many Three.js demos
+        // (including character-control examples) and avoids track-binding/name mismatch issues.
+        if (!isVRM) {
+          const targetMesh = glbSkinnedMeshesRef.current[0] ?? null;
+          if (targetMesh?.skeleton) {
+            try {
+              // Build a source skeleton. Mixamo "without skin" FBX may not contain a SkinnedMesh, so we
+              // fall back to collecting bones and constructing a Skeleton.
+              let sourceSkeleton: THREE.Skeleton | null = null;
+              fbx.traverse((obj: THREE.Object3D) => {
+                // @ts-ignore
+                if (sourceSkeleton) return;
+                // @ts-ignore
+                if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
+                  const s = (obj as any).skeleton as THREE.Skeleton | undefined;
+                  if (s?.bones?.length) sourceSkeleton = s;
+                }
+              });
+              if (!sourceSkeleton) {
+                const bones: THREE.Bone[] = [];
+                fbx.traverse((obj: THREE.Object3D) => {
+                  if ((obj as THREE.Bone).isBone) bones.push(obj as THREE.Bone);
+                });
+                if (bones.length > 0) sourceSkeleton = new THREE.Skeleton(bones);
+              }
+              if (!sourceSkeleton || !sourceSkeleton.bones?.length) {
+                console.warn('[VrmViewer] No bones found in FBX; cannot retarget');
+              } else {
+                const sourceNormToRaw = new Map<string, string>();
+                for (const b of sourceSkeleton.bones) {
+                  const n = normalizeMixamoNodeName(b.name).toLowerCase();
+                  if (!sourceNormToRaw.has(n)) sourceNormToRaw.set(n, b.name);
+                }
+
+                const names: Record<string, string> = {};
+                for (const targetBone of targetMesh.skeleton.bones) {
+                  const norm = normalizeMixamoNodeName(targetBone.name).toLowerCase();
+                  const raw = sourceNormToRaw.get(norm);
+                  if (raw) names[targetBone.name] = raw;
+                }
+
+                const hipRaw = sourceNormToRaw.get('hips') ?? 'Hips';
+                let converted = retargetClip(targetMesh, sourceSkeleton, clip, {
+                  hip: hipRaw,
+                  names,
+                  preservePosition: true,
+                  preserveMatrix: true,
+                });
+
+                // Drop all position tracks except hip, and remove root motion.
+                const cleaned: THREE.KeyframeTrack[] = [];
+                for (const t of converted.tracks) {
+                  if (t.name.endsWith('.position')) {
+                    const isHip = /hips/i.test(t.name);
+                    if (!isHip) continue;
+                    const vt = t as unknown as THREE.VectorKeyframeTrack;
+                    const values = vt.values as unknown as Float32Array;
+                    const count = Math.floor(values.length / 3);
+                    if (count <= 0) continue;
+                    const baseY = values[1];
+                    const posValues = new Float32Array(count * 3);
+                    for (let i = 0; i < count; i += 1) {
+                      posValues[i * 3] = 0; // lock X
+                      posValues[i * 3 + 1] = values[i * 3 + 1] - baseY; // keep Y delta
+                      posValues[i * 3 + 2] = 0; // lock Z
+                    }
+                    cleaned.push(new THREE.VectorKeyframeTrack(t.name, t.times, posValues));
+                    continue;
+                  }
+                  if (t.name.endsWith('.scale')) continue;
+                  if (t.name.includes('.material') || t.name.includes('.materials')) continue;
+                  cleaned.push(t);
+                }
+                converted = new THREE.AnimationClip(clip.name || 'mixamo', clip.duration, cleaned);
+
+                console.log('[VrmViewer] Playing FBX animation (retargetClip):', clip.name || '(unnamed)', 'tracks:', converted.tracks.length);
+                console.log('[VrmViewer] Retargeted track samples:', converted.tracks.slice(0, 5).map((t) => t.name));
+                playClipOnCurrentModel(converted);
+                return;
+              }
+            } catch (e) {
+              console.warn('[VrmViewer] retargetClip failed; falling back to manual retarget:', e);
+            }
+          }
+        }
+
+        const retargeted = retargetMixamoClipToCurrentModel(clip);
+        if (!retargeted) {
+          console.warn('[VrmViewer] Could not retarget any tracks from FBX animation');
+          return;
+        }
+        console.log('[VrmViewer] Playing FBX animation (manual):', clip.name || '(unnamed)', 'tracks:', retargeted.tracks.length);
+        console.log('[VrmViewer] Retargeted track samples:', retargeted.tracks.slice(0, 5).map((t) => t.name));
+        playClipOnCurrentModel(retargeted);
+      },
+      undefined,
+      (err: unknown) => {
+        console.error('[VrmViewer] Failed to load FBX:', err);
+        const msg = String((err as any)?.message ?? err ?? '');
+        if (msg.includes('FBX version not supported') || msg.includes('FileVersion')) {
+          toaster.create({
+            title: 'FBX not supported',
+            description: 'This FBX is an old format (e.g. 6100). Re-download from Mixamo as "FBX Binary" (7.4+) or re-export from Blender as FBX 7.4 binary.',
+            type: 'error',
+            duration: 6000,
+          });
+        }
+      },
+    );
+  }, [playClipOnCurrentModel, retargetMixamoClipToCurrentModel]);
+
+  // Sync isVrmaPlaying state → ref so render-loop closure can read it
+  useEffect(() => { isVrmaPlayingRef.current = isVrmaPlaying; }, [isVrmaPlaying]);
+
+  const playStateAnimFbx = useCallback((url: string) => {
+    if (currentStateAnimUrlRef.current === url) return;
+    currentStateAnimUrlRef.current = url;
+    const vrm = vrmRef.current;
+    if (!vrm?.humanoid) return;
+    if (animMgrRef.current) animMgrRef.current.isMixamoPlaying = true;
+    loadMixamoAnimForVRM(url, vrm).then((clip) => {
+      // Reuse the mixer — crossfade to new clip instead of hard-stopping.
+      if (!mixerRef.current) {
+        mixerRef.current = new THREE.AnimationMixer(vrm.scene);
+      }
+      const mixer = mixerRef.current;
+      const outgoing = currentActionRef.current;
+      const incoming = mixer.clipAction(clip);
+      incoming.reset().play();
+      if (outgoing && outgoing !== incoming) {
+        outgoing.crossFadeTo(incoming, 0.25, false);
+      }
+      currentActionRef.current = incoming;
+      setIsVrmaPlaying(true);
+    }).catch((err) => {
+      console.error('[VrmViewer] State animation failed:', err);
+      currentStateAnimUrlRef.current = '';
+    });
+  }, []);
+
+  const playLoadedClipByName = useCallback((name: string) => {
+    const modelRoot = vrmRef.current?.scene ?? glbModelRef.current;
+    if (!modelRoot) return;
+    const clip = loadedClipsRef.current.find((c) => c.name === name);
+    if (!clip) return;
+
+    if (mixerRef.current) mixerRef.current.stopAllAction();
+    const mixer = new THREE.AnimationMixer(modelRoot);
+    mixerRef.current = mixer;
+    const action = mixer.clipAction(clip);
+    action.reset().play();
+    currentActionRef.current = action;
+    setIsVrmaPlaying(true);
+    console.log('[VrmViewer] Playing embedded clip:', clip.name || '(unnamed)');
+  }, []);
 
   // VRMA Loading & Playback
   const playVrmaFromUrl = (url: string) => {
@@ -472,6 +1783,10 @@ export const VrmViewer = memo(() => {
     }
 
     glbBonesRef.current.clear();
+    initialBoneTransformsRef.current.clear();
+    setRigBones([]);
+    setSelectedBone('');
+    setRigModelStamp((v) => v + 1);
     rootOffsetRef.current = null;
 
     loader.load(
@@ -480,15 +1795,25 @@ export const VrmViewer = memo(() => {
         const model = gltf.scene;
         model.traverse((obj: THREE.Object3D) => {
           obj.frustumCulled = false;
-          if ((obj as THREE.Bone).isBone) {
-            const bone = obj as THREE.Bone;
-            glbBonesRef.current.set(bone.name, bone);
-          }
         });
+        rebuildGlbBoneIndices(model);
         model.scale.setScalar(normalizedConfig.scale);
         model.position.set(normalizedConfig.x, normalizedConfig.y, 0);
         scene.add(model);
         glbModelRef.current = model;
+
+        const bones = Array.from(glbBonesRef.current.keys()).sort((a, b) => a.localeCompare(b));
+        bones.forEach((boneName) => {
+          const node = glbBonesRef.current.get(boneName);
+          if (!node) return;
+          initialBoneTransformsRef.current.set(boneName, {
+            q: node.quaternion.clone(),
+            p: node.position.clone(),
+          });
+        });
+        setRigBones(bones);
+        if (bones.length > 0) setSelectedBone(bones[0]);
+        setRigModelStamp((v) => v + 1);
 
         const clip = gltf.animations[0];
         if (clip) {
@@ -522,6 +1847,8 @@ export const VrmViewer = memo(() => {
       playVrmaFromUrl(url);
     } else if (extension === 'glb' || extension === 'gltf') {
       loadGlbModelFromUrl(url);
+    } else if (extension === 'fbx') {
+      playMixamoFbxFromUrl(url);
     }
   };
 
@@ -533,14 +1860,209 @@ export const VrmViewer = memo(() => {
       setIsVrmaPlaying(false);
   };
 
+  const stopProcedural = useCallback(() => {
+    proceduralActiveRef.current = false;
+    setIsProceduralPlaying(false);
+    // Restore base quaternions.
+    for (const [key, node] of proceduralNodesRef.current.entries()) {
+      const base = proceduralBaseQuatRef.current.get(key);
+      if (!base) continue;
+      node.quaternion.copy(base);
+      node.updateMatrixWorld(true);
+    }
+    proceduralNodesRef.current.clear();
+    proceduralBaseQuatRef.current.clear();
+  }, []);
+
+  const startProcedural = useCallback(() => {
+    // Stop any mixer-driven animation first.
+    if (mixerRef.current) {
+      mixerRef.current.stopAllAction();
+      mixerRef.current = null;
+      currentActionRef.current = null;
+      setIsVrmaPlaying(false);
+    }
+    // If a pose idle is running (eg. floor sit), stop it so we don't fight over arms/spine.
+    stopPoseIdle();
+
+    // Resolve key bones for either VRM or GLB.
+    const vrm = vrmRef.current;
+    const isVRM = Boolean(vrm?.humanoid);
+    const nodes = new Map<string, THREE.Object3D>();
+
+    const setNode = (key: string, node: THREE.Object3D | null) => {
+      if (!node) return;
+      nodes.set(key, node);
+      proceduralBaseQuatRef.current.set(key, node.quaternion.clone());
+    };
+
+    if (isVRM) {
+      setNode('hips', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Hips) ?? null);
+      setNode('spine', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Spine) ?? null);
+      setNode('chest', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Chest) ?? null);
+      setNode('neck', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Neck) ?? null);
+      setNode('head', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Head) ?? null);
+      setNode('leftUpperArm', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.LeftUpperArm) ?? null);
+      setNode('leftLowerArm', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.LeftLowerArm) ?? null);
+      setNode('rightUpperArm', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.RightUpperArm) ?? null);
+      setNode('rightLowerArm', vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.RightLowerArm) ?? null);
+    } else {
+      const byNorm = (name: string) => glbBonesNormalizedRef.current.get(name.toLowerCase()) ?? null;
+      // Mixamo-style normalized names.
+      setNode('hips', byNorm('Hips'));
+      setNode('spine', byNorm('Spine'));
+      setNode('chest', byNorm('Spine1'));
+      setNode('upperChest', byNorm('Spine2'));
+      setNode('neck', byNorm('Neck'));
+      setNode('head', byNorm('Head'));
+      setNode('leftUpperArm', byNorm('LeftArm'));
+      setNode('leftLowerArm', byNorm('LeftForeArm'));
+      setNode('rightUpperArm', byNorm('RightArm'));
+      setNode('rightLowerArm', byNorm('RightForeArm'));
+    }
+
+    if (nodes.size === 0) {
+      toaster.create({
+        title: 'No bones found',
+        description: 'This model has no usable bones for procedural motion.',
+        type: 'error',
+        duration: 3500,
+      });
+      return;
+    }
+
+    proceduralNodesRef.current = nodes;
+    proceduralStartRef.current = performance.now() / 1000;
+    proceduralActiveRef.current = true;
+    setIsProceduralPlaying(true);
+  }, []);
+
+  // Expose a simple "run this script" API from DevTools console:
+  // `window.vtuberMotion.start()` / `window.vtuberMotion.stop()`
+  useEffect(() => {
+    (window as any).vtuberMotion = {
+      start: startProcedural,
+      stop: stopProcedural,
+    };
+    return () => {
+      if ((window as any).vtuberMotion?.start === startProcedural) {
+        delete (window as any).vtuberMotion;
+      }
+    };
+  }, [startProcedural, stopProcedural]);
+
+  const applyPoseProfile = useCallback((profileId: string) => {
+    // Stop any animation that is currently driving the rig.
+    stopProcedural();
+    stopVrma();
+    stopPoseIdle();
+
+    resetAllBones();
+    resetModelRootPosition();
+
+    const root = getCurrentModelRoot();
+    const applyOffsets = (offsets: Partial<Record<LogicalBone, THREE.Euler>>) => {
+      (Object.keys(offsets) as LogicalBone[]).forEach((key) => {
+        const node = getLogicalBoneNode(key);
+        const e = offsets[key];
+        if (!node || !e) return;
+        const base = node.quaternion.clone();
+        const qOff = new THREE.Quaternion().setFromEuler(e);
+        node.quaternion.copy(base).multiply(qOff);
+        node.updateMatrixWorld(true);
+      });
+    };
+
+    if (profileId === 'floor_sit_cross_leg') {
+      const isVRM = Boolean(vrmRef.current?.humanoid);
+      if (!isVRM) {
+        // Apply captured GLB pose exactly (best match for Thanh.glb).
+        if (root && modelBasePositionRef.current) {
+          root.position.copy(modelBasePositionRef.current);
+          root.position.y += FLOOR_SIT_CROSS_LEG_POSE_GLTF.rootYOffset;
+          root.updateMatrixWorld(true);
+        }
+
+        // Set key bone quaternions by name (Mixamo-style skeleton).
+        Object.entries(FLOOR_SIT_CROSS_LEG_POSE_GLTF.boneQuaternions).forEach(([boneName, q]) => {
+          const node = glbBonesRef.current.get(boneName)
+            ?? glbBonesNormalizedRef.current.get(normalizeMixamoNodeName(boneName).toLowerCase())
+            ?? null;
+          if (!node) return;
+          node.quaternion.set(q[0], q[1], q[2], q[3]).normalize();
+          node.updateMatrixWorld(true);
+        });
+      } else {
+        // Fallback heuristics for VRM avatars.
+        if (root && modelBasePositionRef.current) {
+          root.position.copy(modelBasePositionRef.current);
+          root.position.y -= 0.75;
+          root.updateMatrixWorld(true);
+        }
+        applyOffsets({
+          hips: new THREE.Euler(0.05, 0, 0, 'XYZ'),
+          spine: new THREE.Euler(0.08, 0, 0, 'XYZ'),
+          chest: new THREE.Euler(0.06, 0, 0, 'XYZ'),
+          neck: new THREE.Euler(-0.04, 0, 0, 'XYZ'),
+          head: new THREE.Euler(-0.03, 0, 0, 'XYZ'),
+          leftUpperLeg: new THREE.Euler(1.10, 0.45, 0.15, 'XYZ'),
+          leftLowerLeg: new THREE.Euler(-1.35, 0, 0, 'XYZ'),
+          leftFoot: new THREE.Euler(0.15, 0, 0.10, 'XYZ'),
+          rightUpperLeg: new THREE.Euler(1.10, -0.45, -0.15, 'XYZ'),
+          rightLowerLeg: new THREE.Euler(-1.35, 0, 0, 'XYZ'),
+          rightFoot: new THREE.Euler(0.15, 0, -0.10, 'XYZ'),
+          leftShoulder: new THREE.Euler(0.10, 0, 0.05, 'XYZ'),
+          leftUpperArm: new THREE.Euler(0.40, 0, 0.25, 'XYZ'),
+          leftLowerArm: new THREE.Euler(-0.85, 0, 0.10, 'XYZ'),
+          leftHand: new THREE.Euler(0.05, 0, 0.08, 'XYZ'),
+          rightShoulder: new THREE.Euler(0.10, 0, -0.05, 'XYZ'),
+          rightUpperArm: new THREE.Euler(0.40, 0, -0.25, 'XYZ'),
+          rightLowerArm: new THREE.Euler(-0.85, 0, -0.10, 'XYZ'),
+          rightHand: new THREE.Euler(0.05, 0, -0.08, 'XYZ'),
+        });
+      }
+
+      setActivePoseProfile(profileId);
+      // Capture base quats *after* pose applied, then add a subtle idle on top.
+      startPoseIdle([
+        'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+        'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+        'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
+      ]);
+      return;
+    }
+
+    // Unknown or "none": just reset.
+    setActivePoseProfile('');
+  }, [getCurrentModelRoot, getLogicalBoneNode, resetAllBones, resetModelRootPosition, stopProcedural]);
+
+  // Expose pose profiles to DevTools console:
+  // `window.vtuberPose.apply('cross_leg_floor_sit')` / `window.vtuberPose.reset()`
+  useEffect(() => {
+    (window as any).vtuberPose = {
+      apply: (id: string) => applyPoseProfile(id),
+      reset: () => applyPoseProfile(''),
+      profiles: [
+        { id: '', name: 'Reset' },
+        { id: 'floor_sit_cross_leg', name: 'Floor Sit (Crossed Legs)' },
+      ],
+    };
+    return () => {
+      if ((window as any).vtuberPose?.apply) {
+        delete (window as any).vtuberPose;
+      }
+    };
+  }, [applyPoseProfile]);
+
   const handleDoubleClick = () => {
       const currentUrl = normalizedConfig?.url?.toLowerCase() || "";
       if (currentUrl.endsWith(CHARACTER_BLUE_MODEL_SUFFIX.toLowerCase())) {
         console.log("Double click detected on character_blue model, playing random animation...");
         playRandomCharacterBlueAnimation();
       } else {
-        console.log("Double click detected! Playing VRMA_01...");
-        playVrmaFromUrl("/models/VRMA_01.vrma");
+        // Avoid trying to load a hard-coded VRMA that may not exist in the backend.
+        // Use the upload button instead.
+        console.log("Double click detected (no default action).");
       }
   };
 
@@ -556,6 +2078,77 @@ export const VrmViewer = memo(() => {
     };
   }, [applyMotionToAvatar]);
 
+  // Thinking animation pool — add more Mixamo FBX files to this array for variety.
+  // Idle.fbx gives a "still, contemplating" look while the procedural head/eye system
+  // still applies the thinking gaze pattern on top.
+  const THINKING_ANIMS = [
+    '/models/animations/Thinking.fbx',
+    '/models/animations/Idle.fbx',
+  ];
+  const thinkingAnimRef = useRef('');
+
+  // Drive AnimationManager state and FBX animations from AI conversation state
+  useEffect(() => {
+    if (!vrmRef.current?.humanoid) return;
+    if (stateAnimTimerRef.current) {
+      clearTimeout(stateAnimTimerRef.current);
+      stateAnimTimerRef.current = null;
+    }
+    const am = animMgrRef.current;
+    switch (aiState) {
+      case AiStateEnum.IDLE:
+      case AiStateEnum.INTERRUPTED:
+        if (am) am.isSpeaking = false;
+        am?.setState('idle');
+        playStateAnimFbx('/models/animations/Idle.fbx');
+        break;
+      case AiStateEnum.LISTENING:
+        if (am) am.isSpeaking = false;
+        am?.setState('listening');
+        playStateAnimFbx('/models/animations/Idle.fbx');
+        break;
+      case AiStateEnum.THINKING_SPEAKING: {
+        if (am) am.isSpeaking = false;
+        am?.setState('thinking');
+        // Pick a random thinking animation (different from last time if possible)
+        let pick = THINKING_ANIMS[Math.floor(Math.random() * THINKING_ANIMS.length)];
+        if (THINKING_ANIMS.length > 1 && pick === thinkingAnimRef.current) {
+          pick = THINKING_ANIMS.find((a) => a !== pick) ?? pick;
+        }
+        thinkingAnimRef.current = pick;
+        currentStateAnimUrlRef.current = '';
+        playStateAnimFbx(pick);
+        break;
+      }
+      default:
+        if (am) am.isSpeaking = false;
+        am?.setState('idle');
+        playStateAnimFbx('/models/animations/Idle.fbx');
+        break;
+    }
+  }, [aiState, playStateAnimFbx]);
+
+  // Switch to Talking animation and enable lip sync only when audio actually plays
+  useEffect(() => {
+    const onAudioStart = () => {
+      if (animMgrRef.current) {
+        animMgrRef.current.isSpeaking = true;
+        animMgrRef.current.setState('talking');
+      }
+      currentStateAnimUrlRef.current = '';
+      playStateAnimFbx('/models/animations/Talking.fbx');
+    };
+    const onAudioStop = () => {
+      if (animMgrRef.current) animMgrRef.current.isSpeaking = false;
+    };
+    window.addEventListener('vrm-audio-start', onAudioStart);
+    window.addEventListener('vrm-audio-stop', onAudioStop);
+    return () => {
+      window.removeEventListener('vrm-audio-start', onAudioStart);
+      window.removeEventListener('vrm-audio-stop', onAudioStop);
+    };
+  }, [playStateAnimFbx]);
+
   useEffect(() => {
     if (controlsRef.current) {
       controlsRef.current.enabled = !(mode === 'pet' && forceIgnoreMouse);
@@ -568,6 +2161,30 @@ export const VrmViewer = memo(() => {
     if (!container || !normalizedConfig?.url) {
       return () => {};
     }
+
+    // Reset per-model state.
+    if (mixerRef.current) {
+      mixerRef.current.stopAllAction();
+      mixerRef.current = null;
+    }
+    currentActionRef.current = null;
+    loadedClipsRef.current = [];
+    setClipNames([]);
+    setSelectedClipName('');
+    setIsVrmaPlaying(false);
+    if (sceneRef.current && skeletonHelperRef.current) {
+      sceneRef.current.remove(skeletonHelperRef.current);
+    }
+    skeletonHelperRef.current = null;
+    initialBoneTransformsRef.current.clear();
+    setRigBones([]);
+    setSelectedBone('');
+    setRigSearch('');
+    setRigRotDeg({ x: 0, y: 0, z: 0 });
+    setRigPos({ x: 0, y: 0, z: 0 });
+    setShowSkeleton(false);
+    setWireframe(false);
+    setRigModelStamp((v) => v + 1);
 
     console.log('[VrmViewer] Initializing with config:', normalizedConfig);
 
@@ -624,6 +2241,13 @@ export const VrmViewer = memo(() => {
         console.log('[VrmViewer] Model loaded successfully');
         
         const vrm = gltf.userData.vrm as VRM | undefined;
+
+        // Store embedded clips (if any) so we can autoplay / switch them.
+        loadedClipsRef.current = Array.isArray(gltf.animations) ? gltf.animations : [];
+        const names = loadedClipsRef.current.map((c) => c.name).filter((n) => n && n.trim().length > 0);
+        setClipNames(names);
+        if (names.length > 0) setSelectedClipName(names[0]);
+        console.log('[VrmViewer] Embedded animations:', loadedClipsRef.current.length, names);
         
         if (vrm) {
           VRMUtils.removeUnnecessaryVertices(vrm.scene);
@@ -633,26 +2257,88 @@ export const VrmViewer = memo(() => {
             VRMUtils.removeUnnecessaryJoints(vrm.scene);
           }
           VRMUtils.rotateVRM0(vrm);
+          // Fully reset scene rotation — keep only the Y=π that rotateVRM0 sets for
+          // VRM 0.x (needed to flip the facing direction); zero everything else.
+          const isVRM0Scene = vrm.meta?.metaVersion === '0';
+          vrm.scene.rotation.set(0, isVRM0Scene ? Math.PI : 0, 0);
+          console.log('[VrmViewer] metaVersion=', vrm.meta?.metaVersion, 'scene.rotation.y=', vrm.scene.rotation.y);
           vrm.scene.traverse((obj: THREE.Object3D) => {
             obj.frustumCulled = false;
           });
           vrm.scene.scale.setScalar(normalizedConfig.scale);
           vrm.scene.position.set(normalizedConfig.x, normalizedConfig.y, 0);
+          modelBasePositionRef.current = vrm.scene.position.clone();
           scene.add(vrm.scene);
           vrmRef.current = vrm;
+
+          // Populate rig debug list from VRM humanoid bones.
+          const bones: string[] = [];
+          Object.values(VRMHumanBoneName).forEach((boneKey) => {
+            const key = String(boneKey);
+            const node = vrm.humanoid?.getNormalizedBoneNode(boneKey as VRMHumanBoneName);
+            if (!node) return;
+            bones.push(key);
+            initialBoneTransformsRef.current.set(key, {
+              q: node.quaternion.clone(),
+              p: node.position.clone(),
+            });
+          });
+          setRigBones(bones);
+          if (bones.length > 0) setSelectedBone(bones[0]);
+          setRigModelStamp((v) => v + 1);
+
+          // Initialize procedural animation manager and start idle animation
+          if (animMgrRef.current) animMgrRef.current.destroy();
+          animMgrRef.current = new VrmAnimationManager(vrm);
+          currentStateAnimUrlRef.current = '';
+          // Create the one persistent mixer for this model's lifetime.
+          if (mixerRef.current) { mixerRef.current.stopAllAction(); mixerRef.current = null; }
+          const vrmMixer = new THREE.AnimationMixer(vrm.scene);
+          mixerRef.current = vrmMixer;
+          loadMixamoAnimForVRM('/models/animations/Idle.fbx', vrm).then((clip) => {
+            if (disposed) return;
+            currentStateAnimUrlRef.current = '/models/animations/Idle.fbx';
+            const action = vrmMixer.clipAction(clip);
+            action.reset().play();
+            currentActionRef.current = action;
+            setIsVrmaPlaying(true);
+            if (animMgrRef.current) animMgrRef.current.isMixamoPlaying = true;
+          }).catch((err) => console.error('[VrmViewer] Idle animation failed:', err));
+
+          // VRMs typically don't ship animation clips, but if they do, autoplay the first.
+          if (loadedClipsRef.current.length > 0) {
+            playLoadedClipByName(loadedClipsRef.current[0].name);
+          }
         } else {
           const model = gltf.scene;
           model.traverse((obj: THREE.Object3D) => {
             obj.frustumCulled = false;
-            if ((obj as THREE.Bone).isBone) {
-              const bone = obj as THREE.Bone;
-              glbBonesRef.current.set(bone.name, bone);
-            }
           });
+          rebuildGlbBoneIndices(model);
           model.scale.setScalar(normalizedConfig.scale);
           model.position.set(normalizedConfig.x, normalizedConfig.y, 0);
+          modelBasePositionRef.current = model.position.clone();
           scene.add(model);
           glbModelRef.current = model;
+
+          // Populate rig debug list from raw GLB bone names.
+          const bones = Array.from(glbBonesRef.current.keys()).sort((a, b) => a.localeCompare(b));
+          bones.forEach((boneName) => {
+            const node = glbBonesRef.current.get(boneName);
+            if (!node) return;
+            initialBoneTransformsRef.current.set(boneName, {
+              q: node.quaternion.clone(),
+              p: node.position.clone(),
+            });
+          });
+          setRigBones(bones);
+          if (bones.length > 0) setSelectedBone(bones[0]);
+          setRigModelStamp((v) => v + 1);
+
+          // Match the 3d-human-model viewer behavior: play the first embedded clip.
+          if (loadedClipsRef.current.length > 0) {
+            playLoadedClipByName(loadedClipsRef.current[0].name);
+          }
         }
       },
       undefined,
@@ -668,14 +2354,85 @@ export const VrmViewer = memo(() => {
       if (mixerRef.current) {
           mixerRef.current.update(delta);
       }
+
+      if (poseIdleActiveRef.current) {
+        const t = (performance.now() / 1000) - poseIdleStartRef.current;
+        const breathe = Math.sin(t * 1.15);
+        const sway = Math.sin(t * 0.65 + 0.5);
+        const micro = Math.sin(t * 2.2);
+
+        const applyIdle = (key: LogicalBone, euler: THREE.Euler) => {
+          const node = poseIdleNodesRef.current.get(key);
+          const base = poseIdleBaseQuatRef.current.get(key);
+          if (!node || !base) return;
+          const qOff = new THREE.Quaternion().setFromEuler(euler);
+          node.quaternion.copy(base).multiply(qOff);
+          node.updateMatrixWorld(true);
+        };
+
+        applyIdle('chest', new THREE.Euler(0.015 * breathe, 0.01 * sway, 0, 'XYZ'));
+        applyIdle('spine', new THREE.Euler(0.010 * breathe, 0.015 * sway, 0, 'XYZ'));
+        applyIdle('neck', new THREE.Euler(0.010 * micro, 0.010 * sway, 0, 'XYZ'));
+        applyIdle('head', new THREE.Euler(0.015 * micro, 0.020 * sway, 0.005 * micro, 'XYZ'));
+
+        // Tiny arm micro-adjustments.
+        applyIdle('leftUpperArm', new THREE.Euler(0.01 * breathe, 0, 0.015 * micro, 'XYZ'));
+        applyIdle('rightUpperArm', new THREE.Euler(0.01 * breathe, 0, -0.015 * micro, 'XYZ'));
+        applyIdle('leftHand', new THREE.Euler(0, 0, 0.01 * micro, 'XYZ'));
+        applyIdle('rightHand', new THREE.Euler(0, 0, -0.01 * micro, 'XYZ'));
+      }
+
+      // Simple procedural animation: arm wave + slight torso/head movement.
+      if (proceduralActiveRef.current) {
+        const t = (performance.now() / 1000) - proceduralStartRef.current;
+        // Clap loop: bring hands together, contact, and separate.
+        // This is intentionally subtle and model-agnostic; tweak via Rig Debug if axes differ.
+        const speed = 2.8; // claps per second-ish
+        const s = Math.sin(t * speed);
+        const closeRaw = (s + 1) * 0.5; // 0..1
+        const close = closeRaw * closeRaw; // ease in a bit
+        const micro = Math.sin(t * speed * 2.0 + 0.7);
+        const twist = Math.sin(t * 0.6);
+
+        const applyOffset = (key: string, euler: THREE.Euler) => {
+          const node = proceduralNodesRef.current.get(key);
+          const base = proceduralBaseQuatRef.current.get(key);
+          if (!node || !base) return;
+          const qOff = new THREE.Quaternion().setFromEuler(euler);
+          node.quaternion.copy(base).multiply(qOff);
+          node.updateMatrixWorld(true);
+        };
+
+        // Body "alive" while clapping.
+        applyOffset('hips', new THREE.Euler(0.01 * close, 0.04 * twist, 0, 'XYZ'));
+        applyOffset('spine', new THREE.Euler(0.02 * close, 0.06 * twist, 0, 'XYZ'));
+        applyOffset('chest', new THREE.Euler(0.03 * close, 0.05 * twist, 0, 'XYZ'));
+        applyOffset('neck', new THREE.Euler(0.01 * micro, 0.03 * twist, 0, 'XYZ'));
+        applyOffset('head', new THREE.Euler(0.015 * micro, 0.04 * twist, 0.004 * micro, 'XYZ'));
+
+        // Arms: move inward/outward symmetrically.
+        // Upper arms rotate forward slightly and adduct (Z) to bring hands together.
+        applyOffset('leftUpperArm', new THREE.Euler(0.15 + 0.20 * close, 0.10 * close, 0.95 * close, 'XYZ'));
+        applyOffset('rightUpperArm', new THREE.Euler(0.15 + 0.20 * close, -0.10 * close, -0.95 * close, 'XYZ'));
+
+        // Forearms flex to "close" the clap.
+        applyOffset('leftLowerArm', new THREE.Euler(-0.15 * close, 0, 0.55 * close, 'XYZ'));
+        applyOffset('rightLowerArm', new THREE.Euler(-0.15 * close, 0, -0.55 * close, 'XYZ'));
+      }
       
+      // AnimationManager — procedural head/eye/blink (runs after mixer so it overrides FBX head tracks)
+      if (animMgrRef.current) {
+        animMgrRef.current.isMixamoPlaying = isVrmaPlayingRef.current;
+        animMgrRef.current.update(delta);
+      }
+
       const vrm = vrmRef.current;
       if (vrm) {
           vrm.update(delta);
-          // Simple Lip Sync (Sine Wave)
-          if (aiState === AiStateEnum.THINKING_SPEAKING) {
+          // Lip sync only while the AI is actually speaking
+          if (animMgrRef.current?.isSpeaking) {
               const s = Math.sin(clock.elapsedTime * 15);
-              const open = (s + 1) * 0.4;
+              const open = (s + 1) * 0.35;
               vrm.expressionManager?.setValue('aa', open);
           } else {
               vrm.expressionManager?.setValue('aa', 0);
@@ -704,6 +2461,9 @@ export const VrmViewer = memo(() => {
       cancelAnimationFrame(requestRef.current ?? 0);
       controls.dispose();
       renderer.dispose();
+      if (stateAnimTimerRef.current) { clearTimeout(stateAnimTimerRef.current); stateAnimTimerRef.current = null; }
+      if (animMgrRef.current) { animMgrRef.current.destroy(); animMgrRef.current = null; }
+      currentStateAnimUrlRef.current = '';
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
       }
@@ -724,11 +2484,18 @@ export const VrmViewer = memo(() => {
       vrmRef.current = null;
       glbModelRef.current = null;
       glbBonesRef.current.clear();
+      glbBonesNormalizedRef.current.clear();
+      glbSkinnedMeshesRef.current = [];
+      poseIdleActiveRef.current = false;
+      poseIdleNodesRef.current.clear();
+      poseIdleBaseQuatRef.current.clear();
+      skeletonHelperRef.current = null;
       sceneRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
     };
-  }, [normalizedConfig]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [normalizedConfig?.url]);
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
@@ -757,7 +2524,9 @@ export const VrmViewer = memo(() => {
         gap: '8px',
         fontFamily: 'sans-serif',
         fontSize: '12px',
-        maxWidth: '200px'
+        maxWidth: '280px',
+        maxHeight: '80vh',
+        overflow: 'auto'
       }}>
         <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Pose Corrections</div>
         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
@@ -778,9 +2547,153 @@ export const VrmViewer = memo(() => {
         </label>
         
         <div style={{ height: '1px', background: 'rgba(255,255,255,0.3)', margin: '4px 0' }}></div>
-        
+
+        <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Pose Profiles</div>
+        <select
+          value={activePoseProfile}
+          onChange={(e) => setActivePoseProfile(e.target.value)}
+          style={{
+            width: '100%',
+            background: 'rgba(255,255,255,0.08)',
+            color: 'white',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '4px',
+            padding: '4px 6px',
+          }}
+        >
+          <option value="" style={{ color: 'black' }}>Reset</option>
+          <option value="floor_sit_cross_leg" style={{ color: 'black' }}>Floor Sit (Crossed Legs)</option>
+        </select>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => applyPoseProfile(activePoseProfile)}
+            disabled={isAnyAnimationPlaying}
+            style={{
+              cursor: !isAnyAnimationPlaying ? 'pointer' : 'not-allowed',
+              background: 'rgba(255,255,255,0.12)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.2)',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              flex: 1,
+            }}
+          >
+            Apply Pose
+          </button>
+          <button
+            onClick={() => applyPoseProfile('')}
+            disabled={isAnyAnimationPlaying}
+            style={{
+              cursor: !isAnyAnimationPlaying ? 'pointer' : 'not-allowed',
+              background: 'rgba(255,255,255,0.12)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.2)',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              flex: 1,
+            }}
+          >
+            Reset Pose
+          </button>
+        </div>
+
+        <button
+          onClick={copyCurrentPoseToClipboard}
+          style={{
+            cursor: 'pointer',
+            background: 'rgba(255,255,255,0.12)',
+            color: 'white',
+            border: '1px solid rgba(255,255,255,0.2)',
+            padding: '4px 8px',
+            borderRadius: '4px',
+            width: '100%',
+          }}
+        >
+          Copy Pose (All Joints)
+        </button>
+
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.3)', margin: '4px 0' }}></div>
+
         <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>VRM Animation</div>
-        {!isVrmaPlaying ? (
+        {clipNames.length > 0 ? (
+          <>
+            <div style={{ opacity: 0.85 }}>Embedded clips</div>
+            <select
+              value={selectedClipName}
+              onChange={(e) => {
+                const next = e.target.value;
+                setSelectedClipName(next);
+                playLoadedClipByName(next);
+              }}
+              style={{
+                width: '100%',
+                background: 'rgba(255,255,255,0.08)',
+                color: 'white',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '4px',
+                padding: '4px 6px',
+              }}
+            >
+              {clipNames.map((name) => (
+                <option key={name} value={name} style={{ color: 'black' }}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {!isProceduralPlaying ? (
+            <button
+              onClick={startProcedural}
+              disabled={isVrmaPlaying}
+              style={{
+                cursor: !isVrmaPlaying ? 'pointer' : 'not-allowed',
+                background: 'rgba(255,255,255,0.12)',
+                color: 'white',
+                border: '1px solid rgba(255,255,255,0.2)',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                flex: 1,
+              }}
+            >
+              Clap Hands
+            </button>
+          ) : (
+            <button
+              onClick={stopProcedural}
+              style={{
+                cursor: 'pointer',
+                background: '#e53e3e',
+                color: 'white',
+                border: 'none',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                flex: 1,
+              }}
+            >
+              Stop Demo
+            </button>
+          )}
+
+          <button
+            onClick={stopVrma}
+            disabled={!isVrmaPlaying}
+            style={{
+              cursor: isVrmaPlaying ? 'pointer' : 'not-allowed',
+              background: isVrmaPlaying ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.06)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.2)',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              flex: 1,
+            }}
+          >
+            Stop Clip
+          </button>
+        </div>
+
+        {!isAnyAnimationPlaying ? (
             <label style={{ 
                 display: 'inline-block', 
                 cursor: 'pointer', 
@@ -789,17 +2702,17 @@ export const VrmViewer = memo(() => {
                 borderRadius: '4px', 
                 textAlign: 'center' 
             }}>
-                Upload .vrma
+                Upload animation
                 <input 
                     type="file" 
-                    accept=".vrma,.glb,.gltf" 
+                    accept=".vrma,.glb,.gltf,.fbx" 
                     style={{ display: 'none' }} 
                     onChange={handleVrmaUpload} 
                 />
             </label>
         ) : (
             <button 
-                onClick={stopVrma}
+                onClick={() => { stopProcedural(); stopVrma(); }}
                 style={{ 
                     cursor: 'pointer', 
                     background: '#e53e3e', 
@@ -812,6 +2725,142 @@ export const VrmViewer = memo(() => {
                 Stop Animation
             </button>
         )}
+
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.3)', margin: '4px 0' }}></div>
+
+        <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Rig Debug</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={showSkeleton}
+            onChange={(e) => setShowSkeleton(e.target.checked)}
+          />
+          Skeleton
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={wireframe}
+            onChange={(e) => setWireframe(e.target.checked)}
+          />
+          Wireframe
+        </label>
+
+        <input
+          value={rigSearch}
+          onChange={(e) => setRigSearch(e.target.value)}
+          placeholder="Search bone..."
+          style={{
+            width: '100%',
+            background: 'rgba(255,255,255,0.08)',
+            color: 'white',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '4px',
+            padding: '4px 6px',
+          }}
+        />
+
+        <select
+          value={selectedBone}
+          onChange={(e) => setSelectedBone(e.target.value)}
+          style={{
+            width: '100%',
+            background: 'rgba(255,255,255,0.08)',
+            color: 'white',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '4px',
+            padding: '4px 6px',
+          }}
+        >
+          {rigBones
+            .filter((b) => b.toLowerCase().includes(rigSearch.toLowerCase()))
+            .slice(0, 200)
+            .map((b) => (
+              <option key={b} value={b} style={{ color: 'black' }}>{b}</option>
+            ))}
+        </select>
+
+        <div style={{ opacity: 0.85 }}>Rotation (deg)</div>
+        {(['x', 'y', 'z'] as const).map((axis) => (
+          <label key={axis} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '10px' }}>{axis.toUpperCase()}</span>
+            <input
+              type="range"
+              min={-180}
+              max={180}
+              step={1}
+              disabled={!selectedBone || isAnyAnimationPlaying}
+              value={Math.round(rigRotDeg[axis])}
+              onChange={(e) => {
+                const next = { ...rigRotDeg, [axis]: Number(e.target.value) } as Vec3;
+                setRigRotDeg(next);
+                if (selectedBone) applyRigToBone(selectedBone, next, rigPos);
+              }}
+              style={{ flex: 1 }}
+            />
+            <span style={{ width: '44px', textAlign: 'right' }}>{Math.round(rigRotDeg[axis])}</span>
+          </label>
+        ))}
+
+        <div style={{ opacity: 0.85 }}>Position</div>
+        {(['x', 'y', 'z'] as const).map((axis) => (
+          <label key={axis} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '10px' }}>{axis.toUpperCase()}</span>
+            <input
+              type="range"
+              min={-2}
+              max={2}
+              step={0.01}
+              disabled={!selectedBone || isAnyAnimationPlaying}
+              value={rigPos[axis]}
+              onChange={(e) => {
+                const next = { ...rigPos, [axis]: Number(e.target.value) } as Vec3;
+                setRigPos(next);
+                if (selectedBone) applyRigToBone(selectedBone, rigRotDeg, next);
+              }}
+              style={{ flex: 1 }}
+            />
+            <span style={{ width: '44px', textAlign: 'right' }}>{rigPos[axis].toFixed(2)}</span>
+          </label>
+        ))}
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => (selectedBone ? resetBone(selectedBone) : undefined)}
+            disabled={!selectedBone || isAnyAnimationPlaying}
+            style={{
+              cursor: selectedBone && !isAnyAnimationPlaying ? 'pointer' : 'not-allowed',
+              background: 'rgba(255,255,255,0.12)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.2)',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              flex: 1,
+            }}
+          >
+            Reset Bone
+          </button>
+          <button
+            onClick={resetAllBones}
+            disabled={isAnyAnimationPlaying}
+            style={{
+              cursor: !isAnyAnimationPlaying ? 'pointer' : 'not-allowed',
+              background: 'rgba(255,255,255,0.12)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.2)',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              flex: 1,
+            }}
+          >
+            Reset All
+          </button>
+        </div>
+        {isAnyAnimationPlaying ? (
+          <div style={{ opacity: 0.75, fontSize: '11px' }}>
+            Stop animation to edit bones.
+          </div>
+        ) : null}
       </div>
     </div>
   );

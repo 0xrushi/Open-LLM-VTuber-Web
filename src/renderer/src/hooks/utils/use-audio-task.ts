@@ -103,53 +103,50 @@ export const useAudioTask = () => {
       if (audioBase64) {
         const audioDataUrl = `data:audio/wav;base64,${audioBase64}`;
 
-        // Get Live2D manager and model
+        // Try to get Live2D manager and model (optional for VRM models)
         const live2dManager = (window as any).getLive2DManager?.();
-        if (!live2dManager) {
-          console.error('Live2D manager not found');
-          resolve();
-          return;
-        }
+        let model: Live2DModel | null = null;
+        let hasLive2D = false;
 
-        const model = live2dManager.getModel(0);
-        if (!model) {
-          console.error('Live2D model not found at index 0');
-          resolve();
-          return;
-        }
-        console.log('Found model for audio playback');
+        if (live2dManager) {
+          model = live2dManager.getModel(0);
+          if (model) {
+            hasLive2D = true;
+            console.log('Found Live2D model for audio playback with lip sync');
 
-        if (!model._wavFileHandler) {
-          console.warn('Model does not have _wavFileHandler for lip sync');
+            if (!model._wavFileHandler) {
+              console.warn('Model does not have _wavFileHandler for lip sync');
+            } else {
+              console.log('Model has _wavFileHandler available');
+            }
+
+            // Set expression if available
+            const lappAdapter = (window as any).getLAppAdapter?.();
+            if (lappAdapter && expressions?.[0] !== undefined) {
+              setExpression(
+                expressions[0],
+                lappAdapter,
+                `Set expression to: ${expressions[0]}`,
+              );
+            }
+
+            // Start talk motion
+            if (LAppDefine && LAppDefine.PriorityNormal) {
+              console.log("Starting random 'Talk' motion");
+              model.startRandomMotion(
+                "Talk",
+                LAppDefine.PriorityNormal,
+              );
+            }
+          }
         } else {
-          console.log('Model has _wavFileHandler available');
+          console.log('Live2D manager not found - using VRM mode (audio only, no lip sync)');
         }
 
-        // Set expression if available
-        const lappAdapter = (window as any).getLAppAdapter?.();
-        if (lappAdapter && expressions?.[0] !== undefined) {
-          setExpression(
-            expressions[0],
-            lappAdapter,
-            `Set expression to: ${expressions[0]}`,
-          );
-        }
-
-        // Start talk motion
-        if (LAppDefine && LAppDefine.PriorityNormal) {
-          console.log("Starting random 'Talk' motion");
-          model.startRandomMotion(
-            "Talk",
-            LAppDefine.PriorityNormal,
-          );
-        } else {
-          console.warn("LAppDefine.PriorityNormal not found - cannot start talk motion");
-        }
-
-        // Setup audio element
+        // Setup audio element (works for both Live2D and VRM models)
         const audio = new Audio(audioDataUrl);
-        
-        // Register with global audio manager IMMEDIATELY after creating audio
+
+        // Register with global audio manager
         audioManager.setCurrentAudio(audio, model);
         let isFinished = false;
 
@@ -161,7 +158,7 @@ export const useAudioTask = () => {
           }
         };
 
-        // Enhance lip sync sensitivity
+        // Enhance lip sync sensitivity (only for Live2D)
         const lipSyncScale = 2.0;
 
         audio.addEventListener('canplaythrough', () => {
@@ -172,14 +169,15 @@ export const useAudioTask = () => {
             return;
           }
 
-          console.log('Starting audio playback with lip sync');
+          console.log('Starting audio playback' + (hasLive2D ? ' with lip sync' : ' (VRM mode)'));
+          window.dispatchEvent(new CustomEvent('vrm-audio-start'));
           audio.play().catch((err) => {
             console.error("Audio play error:", err);
             cleanup();
           });
 
-          // Setup lip sync
-          if (model._wavFileHandler) {
+          // Setup lip sync only if Live2D model is available
+          if (hasLive2D && model && model._wavFileHandler) {
             if (!model._wavFileHandler._initialized) {
               console.log('Applying enhanced lip sync');
               model._wavFileHandler._initialized = true;
@@ -203,6 +201,7 @@ export const useAudioTask = () => {
 
         audio.addEventListener('ended', () => {
           console.log("Audio playback completed");
+          window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
           cleanup();
         });
 

@@ -67,7 +67,10 @@ const createConfig = async (outDir: string) => ({
   },
   build: {
     outDir: path.join(__dirname, outDir),
-    emptyOutDir: true,
+    // In web mode we build into the backend-served `../frontend` directory.
+    // That directory also contains user-provided assets like `frontend/models`,
+    // so we must not wipe it on each build.
+    emptyOutDir: outDir !== '../frontend',
     assetsDir: "assets",
     rollupOptions: {
       input: {
