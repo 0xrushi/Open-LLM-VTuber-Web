@@ -63,7 +63,7 @@ export interface BlueprintSceneAsset {
 }
 
 const defaultActionsByType: Record<string, string[]> = {
-  bed: ['inspect', 'moveTo', 'sit', 'lieDown'],
+  bed: ['inspect', 'moveTo', 'sit', 'lieDown', 'sleep'],
   chair: ['inspect', 'sit', 'moveTo'],
   sofa: ['inspect', 'sit', 'moveTo'],
   cupboard: ['inspect', 'open', 'close', 'moveTo'],
@@ -604,7 +604,7 @@ const objects: BuildableObject[] = [
   { id: 'ZONE_Kitchen', humanName: 'kitchen zone marker', type: 'zone', zone: 'Kitchen', position: [2.86, 0.02, -1.45], size: [2.25, 0.02, 2.35], color: 0x34b8bd, transparent: true, opacity: 0.05, actions: ['moveTo'] },
   { id: 'ZONE_Bedroom', humanName: 'bedroom zone marker', type: 'zone', zone: 'Bedroom', position: [-2.62, 0.02, 1.22], size: [2.55, 0.02, 2.55], color: 0xf7d36b, transparent: true, opacity: 0.05, actions: ['moveTo'] },
   { id: 'ZONE_NavigationDesk', humanName: 'navigation desk zone marker', type: 'zone', zone: 'NavigationDesk', position: [-2.62, 0.02, -1.55], size: [2.55, 0.02, 2.45], color: 0xe36d2e, transparent: true, opacity: 0.05, actions: ['moveTo'] },
-  { id: 'BED_Main_01', humanName: 'Blueprint3D modern upholstered bed', type: 'bed', zone: 'Bedroom', position: [-2.78, 0, 1.58], rotation: [0, Math.PI, 0], size: [1.95, 0.76, 1.62], color: 0xf47b20, interactionPoints: { sit: [-2.78, 0.58, 0.88], approach: [-2.78, 0, 0.42], lookAt: [-2.78, 0.95, 1.35] }, facingDirection: [0, 0, 1], blueprintAsset: { url: '/blueprint3d-assets/bed-1.glb', scale: 1.0 } },
+  { id: 'BED_Main_01', humanName: 'Blueprint3D modern upholstered bed', type: 'bed', zone: 'Bedroom', position: [-2.78, 0, 1.58], rotation: [0, Math.PI, 0], size: [1.95, 0.76, 1.62], color: 0xf47b20, interactionPoints: { sit: [-2.78, 0.58, 0.88], sleep: [-2.78, 0.62, 1.5], approach: [-2.78, 0, 0.42], lookAt: [-2.78, 0.95, 1.35] }, facingDirection: [0, 0, 1], blueprintAsset: { url: '/blueprint3d-assets/bed-1.glb', scale: 1.0 } },
   { id: 'SOFA_Living_01', humanName: 'Blueprint3D modern two-seater sofa', type: 'sofa', zone: 'LivingRoom', position: [1.23, 0, 1.72], rotation: [0, Math.PI, 0], size: [1.95, 0.86, 0.86], color: 0x167f86, interactionPoints: { sit: [1.23, 0.62, 1.46], approach: [1.23, 0, 0.66], lookAt: [1.23, 0.92, 1.95] }, facingDirection: [0, 0, 1], blueprintAsset: { url: '/blueprint3d-assets/sofa-10.glb', scale: 1.0 } },
   { id: 'TABLE_Coffee_01', humanName: 'Blueprint3D round gold glass coffee table', type: 'table', zone: 'LivingRoom', position: [1.28, 0, 0.48], size: [0.94, 0.57, 0.94], color: 0x8f5a2c, shape: 'cylinder', blueprintAsset: { url: '/blueprint3d-assets/table-3.glb', scale: 0.78 } },
   { id: 'RUG_Tangerine_01', humanName: 'layered tangerine and teal rug', type: 'rug', zone: 'LivingRoom', position: [1.26, 0.015, 0.76], size: [2.55, 0.03, 1.9], color: 0xf2c15f, actions: ['inspect', 'moveTo'] },

@@ -81,6 +81,15 @@ const dispatchSceneActionFromText = (text: string): boolean => {
   if (/\b(sit|seat|sit down)\b/.test(normalized)) {
     return dispatchSceneAction('sit', objectId || 'CHAIR_Desk_01', text);
   }
+  if (/\b(sleep|nap|lie down|lay down|go to bed)\b/.test(normalized)) {
+    return dispatchSceneAction('sleep', objectId || 'BED_Main_01', text);
+  }
+  if (/\b(dance|dancing|twerk|groove|bust a move)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'dance', sourceText: text },
+    }));
+    return true;
+  }
   if (/\b(go to|walk to|move to|approach)\b/.test(normalized)) {
     return dispatchSceneAction('moveTo', objectId, text);
   }
@@ -127,23 +136,27 @@ export function useTextInput() {
   };
 
   const handleSend = async () => {
-    if (!inputText.trim() || !wsContext) return;
+    if (!inputText.trim()) return;
+
+    const trimmedText = inputText.trim();
+
+    // Scene actions are purely frontend — dispatch them even without a backend connection.
+    const handledSceneAction = dispatchSceneActionFromText(trimmedText);
+    if (handledSceneAction) {
+      appendHumanMessage(trimmedText);
+      if (autoStopMic) stopMic();
+      setInputText('');
+      return;
+    }
+
+    if (!wsContext) return;
     if (aiState === 'thinking-speaking') {
       interrupt();
     }
 
     const images = await captureAllMedia();
 
-    const trimmedText = inputText.trim();
-    const handledSceneAction = dispatchSceneActionFromText(trimmedText);
-
     appendHumanMessage(trimmedText);
-    if (handledSceneAction) {
-      if (autoStopMic) stopMic();
-      setInputText('');
-      return;
-    }
-
     wsContext.sendMessage({
       type: 'text-input',
       text: trimmedText,

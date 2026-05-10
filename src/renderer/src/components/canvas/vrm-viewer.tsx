@@ -76,9 +76,22 @@ interface WalkTarget {
   onArrive?: () => void;
 }
 
+interface SleepPoseTarget {
+  objectId: string;
+  rootX: number;
+  rootZ: number;
+  rootYaw: number;
+  surfaceY: number;
+  standPosition: [number, number, number];
+}
+
 interface ClipPlaybackOptions {
   loopOnce?: boolean;
   clampWhenFinished?: boolean;
+  includeHipsRotation?: boolean;
+  includeHipsPosition?: boolean;
+  disableZRollStripping?: boolean;
+  onSettled?: () => void;
 }
 
 interface SeatedRapierHarness {
@@ -98,6 +111,10 @@ const safeNumber = (value: number | undefined, fallback: number) => (
 
 const SITTING_TALKING_FBX_URL = '/models/animations/SittingTalkingFromMixamo.fbx';
 const WALKING_FBX_URL = '/models/animations/WalkingAnimation.fbx';
+const SLEEPING_FBX_URL = '/models/animations/FemaleLayingPose.fbx';
+const DANCE_FBX_ANIMATIONS = [
+  '/models/animations/Dancing_Twerk.fbx',
+];
 
 // Mapping from VRM 0.x standard bone names to Humanoid bone names
 const VRM0_BONE_MAP: Record<string, VRMHumanBoneName> = {
@@ -294,7 +311,7 @@ const MIXAMO_VRM_RIG_MAP: Partial<Record<string, VRMHumanBoneName>> = {
   mixamorigRightToeBase: VRMHumanBoneName.RightToes,
 };
 
-async function loadMixamoAnimForVRM(url: string, vrm: VRM): Promise<THREE.AnimationClip> {
+async function loadMixamoAnimForVRM(url: string, vrm: VRM, options?: ClipPlaybackOptions): Promise<THREE.AnimationClip> {
   const loader = new FBXLoader();
   const asset = await new Promise<THREE.Group>((resolve, reject) => {
     loader.load(url, resolve, undefined, reject);
@@ -328,7 +345,7 @@ async function loadMixamoAnimForVRM(url: string, vrm: VRM): Promise<THREE.Animat
     if (track instanceof THREE.QuaternionKeyframeTrack) {
       // Skip hips rotation — Mixamo animations often bake a yaw into the hips that
       // spins the whole character. The torso bones (spine upward) still animate fully.
-      if (vrmBoneName === VRMHumanBoneName.Hips) continue;
+      if (vrmBoneName === VRMHumanBoneName.Hips && !options?.includeHipsRotation) continue;
 
       // Retarget: parentWorldRot * trackQuat * restWorldRotInv
       mixamoNode.getWorldQuaternion(restRotInv).invert();
@@ -343,7 +360,7 @@ async function loadMixamoAnimForVRM(url: string, vrm: VRM): Promise<THREE.Animat
         vrmBoneName === VRMHumanBoneName.RightUpperLeg
       );
 
-      const _euler = isTrunkBone ? new THREE.Euler() : null;
+      const _euler = (isTrunkBone && !options?.disableZRollStripping) ? new THREE.Euler() : null;
       const values = track.values.slice();
       for (let i = 0; i < values.length; i += 4) {
         _q.fromArray(values, i);
@@ -365,9 +382,23 @@ async function loadMixamoAnimForVRM(url: string, vrm: VRM): Promise<THREE.Animat
         isVRM0 ? values.map((v, i) => (i % 2 === 0 ? -v : v)) : values,
       ));
     } else if (track instanceof THREE.VectorKeyframeTrack && property === 'position') {
-      // Skip position tracks — keeping absolute hips Y causes drift when the VRM scene
-      // has an initialYshift offset (hipsScale goes negative). Rotation tracks alone are
-      // sufficient; the character stays where the user placed it.
+      if (vrmBoneName === VRMHumanBoneName.Hips && options?.includeHipsPosition) {
+        // Convert absolute Mixamo positions to relative offsets from the rest pose.
+        // Mixamo FBX is in cm (hips rest ~100 units for a 170 cm character); scale to
+        // VRM normalized space (~0.9 units hip height at scale 1) using the first-frame
+        // Y as the divisor so the result is model-agnostic.
+        const values = track.values.slice();
+        const x0 = values[0], y0 = values[1], z0 = values[2];
+        const restY = vrmNode.position.y;
+        const scale = y0 > 0 ? (restY / y0) : 0.01;
+        for (let i = 0; i < values.length; i += 3) {
+          values[i]     = (values[i]     - x0) * scale;
+          values[i + 1] = restY + (values[i + 1] - y0) * scale;
+          values[i + 2] = (values[i + 2] - z0) * scale;
+        }
+        tracks.push(new THREE.VectorKeyframeTrack(`${vrmNode.name}.position`, track.times, values));
+      }
+      // Always skip raw absolute position (avoids initialYshift drift).
       continue;
     }
   }
@@ -405,6 +436,8 @@ class VrmAnimationManager {
   private bodyTgt = { x: 0 };
   private bodyCur = { x: 0 };
 
+  private armTimer = 0;
+
   private blinkTimer = 0;
   private nextBlink = 1.5;
   private blinkVal = 0;
@@ -422,6 +455,7 @@ class VrmAnimationManager {
   private thinkingLookAtUserTimer = 0;
 
   isMixamoPlaying = false;
+  isDancing = false;
   isSpeaking = false;
 
   private readonly cfg = {
@@ -696,26 +730,63 @@ class VrmAnimationManager {
     this.stateTimer += dt;
 
     // Apply head/neck — always, even when Mixamo plays (overrides FBX head tracks)
-    const neck = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Neck);
-    if (neck) neck.rotation.set(this.headCur.x * 0.4, this.headCur.y * 0.5, this.headCur.z * 0.5);
-    const head = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Head);
-    if (head) head.rotation.set(this.headCur.x * 0.6, this.headCur.y * 0.5, this.headCur.z * 0.5);
+    // EXCEPT when dancing, as we want to see the expressive dance head movements.
+    if (!this.isDancing) {
+      const neck = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Neck);
+      if (neck) neck.rotation.set(this.headCur.x * 0.4, this.headCur.y * 0.5, this.headCur.z * 0.5);
+      const head = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Head);
+      if (head) head.rotation.set(this.headCur.x * 0.6, this.headCur.y * 0.5, this.headCur.z * 0.5);
+    }
 
-    // Skip body/arms when FBX animation is handling them
-    if (this.isMixamoPlaying) return;
+    // Skip procedural variety only when dancing (which is high-energy and specific)
+    if (this.isDancing) return;
 
     // Body sway
     this.bodyTimer += dt;
     if (this.bodyTimer > 2.8) { this.bodyTgt.x = this.rand(-0.05, 0.05); this.bodyTimer = 0; }
     this.bodyCur.x += (this.bodyTgt.x - this.bodyCur.x) * 0.01;
     const spine = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Spine);
-    if (spine) spine.rotation.x = this.bodyCur.x;
+    if (spine) spine.rotation.x += this.bodyCur.x;
 
-    // Arms-down default
+    // Subtle arm and hand sway
+    this.armTimer += dt;
+    const sway = Math.sin(this.armTimer * 0.5); // slow 12s cycle
+    const swayFast = Math.sin(this.armTimer * 1.2); // breathing-like cycle
+
     const la = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.LeftUpperArm);
     const ra = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.RightUpperArm);
-    if (la) la.rotation.z = -1.2;
-    if (ra) ra.rotation.z = 1.2;
+    const lfa = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.LeftLowerArm);
+    const rfa = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.RightLowerArm);
+    const lh = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.LeftHand);
+    const rh = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.RightHand);
+
+    // If no Mixamo is playing, apply the base "arms down" pose first
+    if (!this.isMixamoPlaying) {
+      if (la) la.rotation.z = -1.2;
+      if (ra) ra.rotation.z = 1.2;
+    }
+
+    // Always apply the subtle procedural variety on top (additive)
+    if (la) {
+      la.rotation.z += (swayFast * 0.04);
+      la.rotation.x += sway * 0.08;
+    }
+    if (ra) {
+      ra.rotation.z -= (swayFast * 0.04);
+      ra.rotation.x += sway * 0.08;
+    }
+
+    if (lfa) lfa.rotation.y += sway * 0.15;
+    if (rfa) rfa.rotation.y -= sway * 0.15;
+
+    if (lh) {
+      lh.rotation.x += swayFast * 0.08;
+      lh.rotation.z += sway * 0.08;
+    }
+    if (rh) {
+      rh.rotation.x += swayFast * 0.08;
+      rh.rotation.z -= sway * 0.08;
+    }
   }
 
   destroy() {
@@ -765,6 +836,7 @@ export const VrmViewer = memo(() => {
   const animMgrRef = useRef<VrmAnimationManager | null>(null);
   const currentStateAnimUrlRef = useRef<string>('');
   const stateAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sleepPoseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isVrmaPlayingRef = useRef(false);
   const seatedContactRef = useRef<SeatedContactTarget | null>(null);
   const rapierModuleRef = useRef<any | null>(null);
@@ -772,12 +844,15 @@ export const VrmViewer = memo(() => {
   const rapierInitPromiseRef = useRef<Promise<void> | null>(null);
   const seatedRapierRef = useRef<SeatedRapierHarness | null>(null);
   const walkTargetRef = useRef<WalkTarget | null>(null);
+  const sleepTargetRef = useRef<SleepPoseTarget | null>(null);
   const sceneObjectBaseTransformRef = useRef<Map<string, {
     position: THREE.Vector3;
     rotation: THREE.Euler;
     visible: boolean;
   }>>(new Map());
   const lanternLitRef = useRef(true);
+  const isSleepingRef = useRef(false);
+  const isDancingRef = useRef(false);
 
   const { modelInfo } = useLive2DConfig();
   const { mode } = useMode();
@@ -1516,6 +1591,10 @@ export const VrmViewer = memo(() => {
     const action = mixer.clipAction(clip);
     configureActionPlayback(action, options);
     action.reset().play();
+    if (options?.onSettled) {
+      if (sleepPoseTimerRef.current) clearTimeout(sleepPoseTimerRef.current);
+      sleepPoseTimerRef.current = setTimeout(options.onSettled, Math.max(0.2, clip.duration) * 1000);
+    }
     currentActionRef.current = action;
     setIsVrmaPlaying(true);
   }, [configureActionPlayback]);
@@ -1653,13 +1732,14 @@ export const VrmViewer = memo(() => {
         const baseX = values[0];
         const baseY = values[1];
         const baseZ = values[2];
+        const restY = targetNode.position.y;
         const posValues = new Float32Array(count * 3);
         for (let i = 0; i < count; i += 1) {
           const x = values[i * 3];
           const y = values[i * 3 + 1];
           const z = values[i * 3 + 2];
           posValues[i * 3] = x - baseX;
-          posValues[i * 3 + 1] = y - baseY;
+          posValues[i * 3 + 1] = restY + (y - baseY);
           posValues[i * 3 + 2] = z - baseZ;
         }
         tracks.push(new THREE.VectorKeyframeTrack(
@@ -1813,7 +1893,7 @@ export const VrmViewer = memo(() => {
     const vrm = vrmRef.current;
     if (!vrm?.humanoid) return false;
 
-    loadMixamoAnimForVRM(url, vrm).then((clip) => {
+    loadMixamoAnimForVRM(url, vrm, options).then((clip) => {
       if (options?.loopOnce && currentStateAnimUrlRef.current !== url) return;
       if (!vrmRef.current?.scene) return;
       if (mixerRef.current) {
@@ -1824,6 +1904,10 @@ export const VrmViewer = memo(() => {
       const action = mixer.clipAction(clip);
       configureActionPlayback(action, options);
       action.reset().play();
+      if (options?.onSettled) {
+        if (sleepPoseTimerRef.current) clearTimeout(sleepPoseTimerRef.current);
+        sleepPoseTimerRef.current = setTimeout(options.onSettled, Math.max(0.2, clip.duration) * 1000);
+      }
       currentActionRef.current = action;
       setIsVrmaPlaying(true);
       if (animMgrRef.current) {
@@ -1852,6 +1936,12 @@ export const VrmViewer = memo(() => {
     const lookAtTarget = new THREE.Vector3(lookAt[0], lookAt[1], lookAt[2]);
 
     seatedContactRef.current = null;
+    isSleepingRef.current = false;
+    if (sleepPoseTimerRef.current) {
+      clearTimeout(sleepPoseTimerRef.current);
+      sleepPoseTimerRef.current = null;
+    }
+    stopPoseIdle();
     disposeSeatedRapier();
     walkTargetRef.current = {
       objectId: entry.id,
@@ -1859,6 +1949,7 @@ export const VrmViewer = memo(() => {
       lookAt: lookAtTarget,
       onArrive,
     };
+    sleepTargetRef.current = null;
 
     const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
     root.rotation.y = baseRotY + Math.atan2(target.x - root.position.x, target.z - root.position.z);
@@ -1870,7 +1961,7 @@ export const VrmViewer = memo(() => {
       playMixamoFbxFromUrl(WALKING_FBX_URL);
     }
     return true;
-  }, [disposeSeatedRapier, getCurrentModelRoot, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl]);
+  }, [disposeSeatedRapier, getCurrentModelRoot, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl, stopPoseIdle]);
 
   const keepWalkingAnimationActive = useCallback(() => {
     const action = currentActionRef.current;
@@ -1900,6 +1991,8 @@ export const VrmViewer = memo(() => {
 
   const playStateAnimFbx = useCallback((url: string) => {
     if (walkTargetRef.current && url !== WALKING_FBX_URL) return;
+    if (isSleepingRef.current && url !== SLEEPING_FBX_URL) return;
+    if (isDancingRef.current) return;
     if (currentStateAnimUrlRef.current === url) return;
     currentStateAnimUrlRef.current = url;
     const vrm = vrmRef.current;
@@ -2230,7 +2323,13 @@ export const VrmViewer = memo(() => {
           mixerRef.current.stopAllAction();
           mixerRef.current = null;
       }
+      if (sleepPoseTimerRef.current) {
+          clearTimeout(sleepPoseTimerRef.current);
+          sleepPoseTimerRef.current = null;
+      }
       seatedContactRef.current = null;
+      isSleepingRef.current = false;
+      sleepTargetRef.current = null;
       disposeSeatedRapier();
       walkTargetRef.current = null;
       setIsVrmaPlaying(false);
@@ -2352,6 +2451,7 @@ export const VrmViewer = memo(() => {
     if (profileId === 'floor_sit_cross_leg') {
       seatedContactRef.current = null;
       disposeSeatedRapier();
+      sleepTargetRef.current = null;
       const isVRM = Boolean(vrmRef.current?.humanoid);
       if (!isVRM) {
         // Apply captured GLB pose exactly (best match for Thanh.glb).
@@ -2413,6 +2513,7 @@ export const VrmViewer = memo(() => {
     if (profileId === 'chair_sit') {
       seatedContactRef.current = null;
       disposeSeatedRapier();
+      sleepTargetRef.current = null;
       const isVRM = Boolean(vrmRef.current?.humanoid);
       if (!isVRM) {
         applyOffsets({
@@ -2466,6 +2567,7 @@ export const VrmViewer = memo(() => {
     // Unknown or "none": just reset.
     seatedContactRef.current = null;
     setActivePoseProfile('');
+    sleepTargetRef.current = null;
   }, [getCurrentModelRoot, getLogicalBoneNode, resetAllBones, resetModelRootPosition, stopProcedural]);
 
   const sitOnSceneObject = useCallback((objectId: string) => {
@@ -2495,6 +2597,11 @@ export const VrmViewer = memo(() => {
 
     stopPoseIdle();
     stopProcedural();
+    isSleepingRef.current = false;
+    if (sleepPoseTimerRef.current) {
+      clearTimeout(sleepPoseTimerRef.current);
+      sleepPoseTimerRef.current = null;
+    }
     disposeSeatedRapier();
     seatedContactRef.current = {
       objectId,
@@ -2526,13 +2633,94 @@ export const VrmViewer = memo(() => {
     });
   }, [createSeatedRapierHarness, disposeSeatedRapier, ensureRapierReady, getAiSceneObject, getCurrentModelRoot, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl, stopPoseIdle, stopProcedural]);
 
+  const sleepOnSceneObject = useCallback((objectId: string) => {
+    const target = getAiSceneObject(objectId);
+    const root = getCurrentModelRoot();
+    const sleepPoint = target?.interactionPoints?.sleep ?? target?.interactionPoints?.sit;
+
+    if (!target || !sleepPoint || !root || !target.actions.includes('sleep')) {
+      toaster.create({
+        title: 'Cannot sleep there',
+        description: target ? `${target.humanName} has no sleep point.` : `Object ${objectId} was not found.`,
+        type: 'error',
+        duration: 2500,
+      });
+      return;
+    }
+
+    stopPoseIdle();
+    stopProcedural();
+    disposeSeatedRapier();
+    seatedContactRef.current = null;
+    sleepTargetRef.current = null;
+    isSleepingRef.current = true;
+
+    const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
+    const sleepYaw = baseRotY + target.rotation[1] + Math.PI / 2;
+
+    // Root Y confirmed by user observation (accounts for kScale 1.81 and model bone offsets).
+    // Storing it as surfaceY so the render loop just clamps root.position.y to this value
+    // each frame without any hips-based math that can drift with scale differences.
+    const SLEEP_ROOT_Y = -1.15;
+    root.position.set(sleepPoint[0], SLEEP_ROOT_Y, sleepPoint[2]);
+    root.rotation.y = sleepYaw;
+    root.updateMatrixWorld(true);
+    modelBasePositionRef.current = root.position.clone();
+
+    sleepTargetRef.current = {
+      objectId,
+      rootX: sleepPoint[0],
+      rootZ: sleepPoint[2],
+      rootYaw: sleepYaw,
+      surfaceY: SLEEP_ROOT_Y,
+      standPosition: target.interactionPoints.approach ?? [sleepPoint[0], 0, sleepPoint[2] + 0.7],
+    };
+
+    const startSleepingBreath = () => {
+      if (!isSleepingRef.current) return;
+      startPoseIdle([
+        'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+        'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+        'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
+      ]);
+    };
+
+    currentStateAnimUrlRef.current = SLEEPING_FBX_URL;
+    const sleepingPlayback: ClipPlaybackOptions = {
+      loopOnce: true,
+      clampWhenFinished: true,
+      includeHipsRotation: true,
+      onSettled: startSleepingBreath,
+    };
+    const didUseVrmRetarget = playVrmRetargetedFbxFromUrl(SLEEPING_FBX_URL, sleepingPlayback);
+    if (!didUseVrmRetarget) {
+      playMixamoFbxFromUrl(SLEEPING_FBX_URL, sleepingPlayback);
+    }
+
+    toaster.create({
+      title: 'Scene action',
+      description: `Sleeping on ${target.humanName}.`,
+      type: 'success',
+      duration: 1800,
+    });
+  }, [disposeSeatedRapier, getAiSceneObject, getCurrentModelRoot, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl, startPoseIdle, stopPoseIdle, stopProcedural]);
+
   const standFromSceneObject = useCallback(() => {
     const root = getCurrentModelRoot();
     const seatedContact = seatedContactRef.current;
-    const standPosition = seatedContact?.standPosition ?? null;
+    const sleepTarget = sleepTargetRef.current;
+    const standPosition = seatedContact?.standPosition ?? sleepTarget?.standPosition ?? null;
 
     seatedContactRef.current = null;
+    isSleepingRef.current = false;
+    sleepTargetRef.current = null;
+    if (sleepPoseTimerRef.current) {
+      clearTimeout(sleepPoseTimerRef.current);
+      sleepPoseTimerRef.current = null;
+    }
     disposeSeatedRapier();
+    isDancingRef.current = false;
+    isSleepingRef.current = false;
     stopPoseIdle();
     stopProcedural();
     stopVrma();
@@ -2564,6 +2752,37 @@ export const VrmViewer = memo(() => {
       duration: 1800,
     });
   }, [disposeSeatedRapier, getCurrentModelRoot, playStateAnimFbx, resetAllBones, stopPoseIdle, stopProcedural]);
+
+  const playRandomDance = useCallback(() => {
+    const url = DANCE_FBX_ANIMATIONS[Math.floor(Math.random() * DANCE_FBX_ANIMATIONS.length)];
+    stopPoseIdle();
+    stopProcedural();
+    disposeSeatedRapier();
+    seatedContactRef.current = null;
+    sleepTargetRef.current = null;
+    isSleepingRef.current = false;
+    isDancingRef.current = true;
+    currentStateAnimUrlRef.current = url;
+    const playback: ClipPlaybackOptions = { 
+      loopOnce: false, 
+      includeHipsRotation: true, 
+      includeHipsPosition: true,
+      disableZRollStripping: true 
+    };
+    const didUseVrmRetarget = playVrmRetargetedFbxFromUrl(url, playback);
+    if (!didUseVrmRetarget) {
+      playMixamoFbxFromUrl(url, playback);
+    }
+    toaster.create({
+      title: 'Dance',
+      description: 'Dancing!',
+      type: 'success',
+      duration: 1800,
+    });
+  }, [disposeSeatedRapier, playMixamoFbxFromUrl, playVrmRetargetedFbxFromUrl, stopPoseIdle, stopProcedural]);
+  // Keep a ref so the event listener always calls the latest version (avoids stale closure).
+  const playRandomDanceRef = useRef(playRandomDance);
+  playRandomDanceRef.current = playRandomDance;
 
   const animateSceneObjectOpenState = useCallback((entry: SceneObjectRegistryEntry, open: boolean) => {
     const object = getSceneObject3D(entry.id);
@@ -2644,6 +2863,11 @@ export const VrmViewer = memo(() => {
         case 'moveTo':
           focusCameraOnSceneObject(entry);
           break;
+        case 'sleep':
+        case 'lieDown':
+          sleepOnSceneObject(entry.id);
+          focusCameraOnSceneObject(entry);
+          break;
         case 'inspect':
         case 'read':
         case 'lookOut':
@@ -2704,6 +2928,7 @@ export const VrmViewer = memo(() => {
     getAiSceneObject,
     getSceneObject3D,
     moveAvatarToSceneObject,
+    sleepOnSceneObject,
     startWalkingToSceneObject,
   ]);
 
@@ -2712,8 +2937,12 @@ export const VrmViewer = memo(() => {
       const detail = (event as CustomEvent<AiSceneActionEventDetail>).detail;
       if (detail?.action === 'sit' && detail.objectId) {
         sitOnSceneObject(detail.objectId);
+      } else if ((detail?.action === 'sleep' || detail?.action === 'lieDown') && detail.objectId) {
+        executeSceneObjectAction(detail.action, detail.objectId);
       } else if (detail?.action === 'stand') {
         standFromSceneObject();
+      } else if (detail?.action === 'dance') {
+        playRandomDanceRef.current();
       } else if (detail?.action && detail.objectId) {
         executeSceneObjectAction(detail.action, detail.objectId);
       }
@@ -2730,7 +2959,9 @@ export const VrmViewer = memo(() => {
       apply: (id: string) => applyPoseProfile(id),
       reset: () => applyPoseProfile(''),
       sit: (objectId = 'CHAIR_Desk_01') => sitOnSceneObject(objectId),
+      sleep: (objectId = 'BED_Main_01') => executeSceneObjectAction('sleep', objectId),
       stand: () => standFromSceneObject(),
+      dance: () => playRandomDanceRef.current(),
       action: (action: string, objectId: string) => executeSceneObjectAction(action, objectId),
       profiles: [
         { id: '', name: 'Reset' },
@@ -2823,6 +3054,7 @@ export const VrmViewer = memo(() => {
   useEffect(() => {
     const onAudioStart = () => {
       if (walkTargetRef.current) return;
+      if (isSleepingRef.current) return;
       if (animMgrRef.current) {
         animMgrRef.current.isSpeaking = true;
         animMgrRef.current.setState('talking');
@@ -3235,6 +3467,7 @@ export const VrmViewer = memo(() => {
       // AnimationManager — procedural head/eye/blink (runs after mixer so it overrides FBX head tracks)
       if (animMgrRef.current) {
         animMgrRef.current.isMixamoPlaying = isVrmaPlayingRef.current;
+        animMgrRef.current.isDancing = isDancingRef.current;
         animMgrRef.current.update(delta);
       }
 
@@ -3287,6 +3520,28 @@ export const VrmViewer = memo(() => {
             root.rotation.y = (vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0)
               + Math.atan2(direction.x, direction.z);
             root.updateMatrixWorld(true);
+          }
+        }
+      }
+
+      const sleepTarget = sleepTargetRef.current;
+      if (sleepTarget) {
+        const root = vrmRef.current?.scene ?? glbModelRef.current;
+        if (root) {
+          root.position.x = THREE.MathUtils.lerp(root.position.x, sleepTarget.rootX, 0.35);
+          root.position.z = THREE.MathUtils.lerp(root.position.z, sleepTarget.rootZ, 0.35);
+          root.rotation.x = 0;
+          root.rotation.y = sleepTarget.rootYaw;
+          root.rotation.z = 0;
+          root.updateMatrixWorld(true);
+
+          // surfaceY stores the root Y directly (not a bed surface + offset).
+          // Hold it fixed every frame so scale differences and bone-offset math
+          // cannot drift the character away from the confirmed correct position.
+          if (root.position.y !== sleepTarget.surfaceY) {
+            root.position.y = sleepTarget.surfaceY;
+            root.updateMatrixWorld(true);
+            modelBasePositionRef.current = root.position.clone();
           }
         }
       }
@@ -3383,9 +3638,12 @@ export const VrmViewer = memo(() => {
       controls.dispose();
       renderer.dispose();
       if (stateAnimTimerRef.current) { clearTimeout(stateAnimTimerRef.current); stateAnimTimerRef.current = null; }
+      if (sleepPoseTimerRef.current) { clearTimeout(sleepPoseTimerRef.current); sleepPoseTimerRef.current = null; }
       if (animMgrRef.current) { animMgrRef.current.destroy(); animMgrRef.current = null; }
       currentStateAnimUrlRef.current = '';
       seatedContactRef.current = null;
+      isSleepingRef.current = false;
+      sleepTargetRef.current = null;
       disposeSeatedRapier();
       walkTargetRef.current = null;
       if (renderer.domElement.parentElement === container) {
