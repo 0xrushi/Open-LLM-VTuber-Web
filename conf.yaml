@@ -12,10 +12,10 @@ system_config:
   config_alts_dir: 'characters'
 
 character_config:
-  conf_name: 'mao_pro'
-  conf_uid: 'mao_pro_001'
-  live2d_model_name: 'mao_pro'
-  character_name: 'Mao'
-  avatar: 'mao.png'
+  conf_name: 'Nami'
+  conf_uid: 'nami_001'
+  live2d_model_name: 'Nami'
+  character_name: 'Nami'
+  avatar: ''
   human_name: 'Human'
 

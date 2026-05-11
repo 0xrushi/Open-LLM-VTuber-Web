@@ -21,6 +21,7 @@ class AudioManager {
     if (this.currentAudio) {
       console.log('[AudioManager] Stopping current audio and lip sync');
       const audio = this.currentAudio;
+      window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
       
       // Stop audio playback
       audio.pause();

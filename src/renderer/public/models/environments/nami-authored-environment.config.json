@@ -1,0 +1,221 @@
+{
+  "sceneId": "custom_environment",
+  "displayName": "Custom Environment",
+  "units": "meters",
+  "objects": [
+    {
+      "id": "armchair_19",
+      "humanName": "armchair 19",
+      "type": "prop",
+      "zone": "Room",
+      "assetName": "armchair-19.glb",
+      "assetPath": "frontend/models/blueprint3d/armchair-19.glb",
+      "assetUrl": "/@fs/Users/bread/Documents/Open-LLM-VTuber/frontend/models/blueprint3d/armchair-19.glb",
+      "position": [
+        -3.197,
+        0.101,
+        -0.532
+      ],
+      "rotation": [
+        -3.142,
+        0.049,
+        -3.142
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "actions": [
+        "inspect",
+        "moveTo"
+      ],
+      "interactionPoints": {}
+    },
+    {
+      "id": "treadmill",
+      "humanName": "treadmill",
+      "type": "prop",
+      "zone": "Room",
+      "assetName": "treadmill.glb",
+      "assetPath": "frontend/models/house-assets/treadmill.glb",
+      "assetUrl": "/@fs/Users/bread/Documents/Open-LLM-VTuber/frontend/models/house-assets/treadmill.glb",
+      "defaultScale": 0.009,
+      "position": [
+        4.897,
+        0.008,
+        -14.391
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        0.009,
+        0.009,
+        0.009
+      ],
+      "actions": [
+        "inspect",
+        "moveTo"
+      ],
+      "interactionPoints": {}
+    },
+    {
+      "id": "corner_kitchen_unit",
+      "humanName": "corner kitchen unit",
+      "type": "prop",
+      "zone": "Room",
+      "assetName": "corner-kitchen-unit.glb",
+      "assetPath": "frontend/models/house-assets/corner-kitchen-unit.glb",
+      "assetUrl": "/@fs/Users/bread/Documents/Open-LLM-VTuber/frontend/models/house-assets/corner-kitchen-unit.glb",
+      "position": [
+        4.975,
+        -0.148,
+        -1.722
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "actions": [
+        "inspect",
+        "moveTo"
+      ],
+      "interactionPoints": {}
+    },
+    {
+      "id": "dining_furniture",
+      "humanName": "dining furniture",
+      "type": "prop",
+      "zone": "Room",
+      "assetName": "dining-furniture.glb",
+      "assetPath": "frontend/models/house-assets/dining-furniture.glb",
+      "assetUrl": "/@fs/Users/bread/Documents/Open-LLM-VTuber/frontend/models/house-assets/dining-furniture.glb",
+      "position": [
+        -1.324,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "actions": [
+        "inspect",
+        "moveTo"
+      ],
+      "interactionPoints": {}
+    },
+    {
+      "id": "bed_1",
+      "humanName": "bed 1",
+      "type": "prop",
+      "zone": "Room",
+      "assetName": "bed-1.glb",
+      "assetPath": "frontend/models/blueprint3d/bed-1.glb",
+      "assetUrl": "/@fs/Users/bread/Documents/Open-LLM-VTuber/frontend/models/blueprint3d/bed-1.glb",
+      "position": [
+        -1.757,
+        0,
+        2.022
+      ],
+      "rotation": [
+        0,
+        1.547,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "actions": [
+        "inspect",
+        "moveTo"
+      ],
+      "interactionPoints": {}
+    },
+    {
+      "id": "desk",
+      "humanName": "drawer 6",
+      "type": "prop",
+      "zone": "Room",
+      "assetName": "drawer-6.glb",
+      "assetPath": "frontend/models/blueprint3d/drawer-6.glb",
+      "assetUrl": "/@fs/Users/bread/Documents/Open-LLM-VTuber/frontend/models/blueprint3d/drawer-6.glb",
+      "position": [
+        -3.288,
+        0.055,
+        -1.902
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "actions": [
+        "inspect",
+        "moveTo"
+      ],
+      "interactionPoints": {}
+    },
+    {
+      "id": "storage_1",
+      "humanName": "storage 1",
+      "type": "prop",
+      "zone": "Room",
+      "assetName": "storage-1.glb",
+      "assetPath": "frontend/models/blueprint3d/storage-1.glb",
+      "assetUrl": "/@fs/Users/bread/Documents/Open-LLM-VTuber/frontend/models/blueprint3d/storage-1.glb",
+      "position": [
+        -3.709,
+        0,
+        1.595
+      ],
+      "rotation": [
+        -3.142,
+        1.547,
+        -3.142
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "actions": [
+        "inspect",
+        "moveTo"
+      ],
+      "interactionPoints": {}
+    }
+  ],
+  "room": {
+    "id": "ROOM_Block_01",
+    "width": 8,
+    "depth": 6,
+    "height": 3,
+    "floorColor": "#c99a68",
+    "wallColor": "#ff955c",
+    "hasFloorTexture": true,
+    "hasWallTexture": false
+  }
+}

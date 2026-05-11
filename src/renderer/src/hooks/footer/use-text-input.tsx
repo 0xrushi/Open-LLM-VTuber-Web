@@ -7,13 +7,18 @@ import { useVAD } from '@/context/vad-context';
 import { useMediaCapture } from '@/hooks/utils/use-media-capture';
 
 const sceneObjectAliases: Array<{ id: string; patterns: RegExp[] }> = [
-  { id: 'CHAIR_Desk_01', patterns: [/\bdesk chair\b/, /\bnavigation chair\b/, /\bchair at the desk\b/] },
-  { id: 'CHAIR_Living_01', patterns: [/\bliving chair\b/, /\blounge chair\b/, /\bgold chair\b/] },
-  { id: 'SOFA_Living_01', patterns: [/\bsofa\b/, /\bcouch\b/] },
-  { id: 'BED_Main_01', patterns: [/\bbed\b/] },
+  { id: 'armchair_19', patterns: [/\bdesk chair\b/, /\bnavigation chair\b/, /\bchair at the desk\b/, /\bliving chair\b/, /\blounge chair\b/, /\bgold chair\b/, /\bsofa\b/, /\bcouch\b/, /\bchair\b/] },
+  { id: 'bed_1', patterns: [/\bbed\b/] },
+  { id: 'treadmill', patterns: [/\btreadmill\b/, /\brunning machine\b/] },
+  { id: 'dining_furniture', patterns: [/\bdining furniture\b/, /\bcoffee table\b/, /\btable\b/] },
+  { id: 'desk', patterns: [/\bnavigation desk\b/, /\bdesk\b/] },
+  { id: 'corner_kitchen_unit', patterns: [/\bkitchen unit\b/, /\bcounter\b/, /\bkitchen\b/] },
+  { id: 'storage_1', patterns: [/\bcabinet\b/, /\bstorage\b/, /\bcloset\b/, /\bshelf\b/] },
+  { id: 'PROP_CoffeeCup_01', patterns: [/\bcoffee cup\b/, /\bcup\b/, /\bmug\b/] },
+  { id: 'APPLIANCE_CoffeeMachine_01', patterns: [/\bcoffee machine\b/, /\bespresso machine\b/] },
   { id: 'DRAWER_Kitchen_01', patterns: [/\bleft drawer\b/, /\bkitchen drawer\b/, /\bdrawer\b/] },
   { id: 'DRAWER_Kitchen_02', patterns: [/\bright drawer\b/, /\bsecond drawer\b/] },
-  { id: 'CUPBOARD_Kitchen_Lower_01', patterns: [/\blower cupboard\b/, /\blower cabinet\b/] },
+  { id: 'corner_kitchen_unit', patterns: [/\blower cupboard\b/, /\blower cabinet\b/] },
   { id: 'CUPBOARD_Kitchen_Upper_01', patterns: [/\bupper cupboard\b/, /\bupper cabinet\b/] },
   { id: 'WARDROBE_Clothes_01', patterns: [/\bwardrobe\b/, /\bcloset\b/, /\bclothes\b/] },
   { id: 'ROOM_Window_Ocean_01', patterns: [/\bwindow\b/, /\bocean window\b/, /\bsea\b/] },
@@ -31,8 +36,6 @@ const sceneObjectAliases: Array<{ id: string; patterns: RegExp[] }> = [
   { id: 'PROP_KitchenUtensils_01', patterns: [/\butensils\b/] },
   { id: 'PROP_CupsPlates_01', patterns: [/\bcups\b/, /\bplates\b/] },
   { id: 'PROP_Bottles_01', patterns: [/\bbottles\b/] },
-  { id: 'TABLE_Coffee_01', patterns: [/\bcoffee table\b/, /\btable\b/] },
-  { id: 'DESK_Navigation_01', patterns: [/\bnavigation desk\b/, /\bdesk\b/] },
 ];
 
 const resolveSceneObjectId = (normalizedText: string): string => {
@@ -79,10 +82,10 @@ const dispatchSceneActionFromText = (text: string): boolean => {
   const objectId = resolveSceneObjectId(normalized);
 
   if (/\b(sit|seat|sit down)\b/.test(normalized)) {
-    return dispatchSceneAction('sit', objectId || 'CHAIR_Desk_01', text);
+    return dispatchSceneAction('sit', objectId || 'desk', text);
   }
   if (/\b(sleep|nap|lie down|lay down|go to bed)\b/.test(normalized)) {
-    return dispatchSceneAction('sleep', objectId || 'BED_Main_01', text);
+    return dispatchSceneAction('sleep', objectId || 'bed_1', text);
   }
   if (/\b(dance|dancing|twerk|groove|bust a move)\b/.test(normalized)) {
     window.dispatchEvent(new CustomEvent('ai-scene-action', {
@@ -90,8 +93,47 @@ const dispatchSceneActionFromText = (text: string): boolean => {
     }));
     return true;
   }
-  if (/\b(go to|walk to|move to|approach)\b/.test(normalized)) {
-    return dispatchSceneAction('moveTo', objectId, text);
+  if (/\b(sit animation|sitting animation|sit pose|do a sit pose)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'sit_animation', sourceText: text },
+    }));
+    return true;
+  }
+  if (/\b(talk animation|talking animation|speak animation|speaking pose)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'talking_animation', sourceText: text },
+    }));
+    return true;
+  }
+  if (/\b(taunt|taunting|mock|insult pose|threaten)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'taunting', sourceText: text },
+    }));
+    return true;
+  }
+  if (/\b(think pose|thinking animation|ponder|plotting)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'thinking_animation', sourceText: text },
+    }));
+    return true;
+  }
+  if (/\b(fist ?pump|victory pose|celebrate)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'fist_pump', sourceText: text },
+    }));
+    return true;
+  }
+  if (/\b(stretch|yawn|shoulder rub|neck stretch)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'stretch_yawn_shoulder', sourceText: text },
+    }));
+    return true;
+  }
+  if (/\b(give me kiss|kiss me|blow( me)? a kiss|send( me)? a kiss)\b/.test(normalized)) {
+    window.dispatchEvent(new CustomEvent('ai-scene-action', {
+      detail: { action: 'kiss', sourceText: text },
+    }));
+    return true;
   }
   if (/\b(open)\b/.test(normalized)) {
     return dispatchSceneAction('open', objectId, text);
@@ -99,8 +141,17 @@ const dispatchSceneActionFromText = (text: string): boolean => {
   if (/\b(close|shut)\b/.test(normalized)) {
     return dispatchSceneAction('close', objectId, text);
   }
-  if (/\b(pick up|grab|take)\b/.test(normalized)) {
-    return dispatchSceneAction('pickUp', objectId, text);
+  if (/\b(pick( up| a| some)?|grab|take)\b/.test(normalized)) {
+    return dispatchSceneAction('pickUp', objectId || (/\b(cup|mug)\b/.test(normalized) ? 'PROP_CoffeeCup_01' : ''), text);
+  }
+  if (/\b(run|jog|walk)\b/.test(normalized) && /\btreadmill\b/.test(normalized)) {
+    return dispatchSceneAction(/\b(run|jog)\b/.test(normalized) ? 'runOn' : 'walkOn', objectId || 'treadmill', text);
+  }
+  if (/\b(use|make coffee|brew)\b/.test(normalized) && /\b(coffee machine|espresso machine|kitchen)\b/.test(normalized)) {
+    return dispatchSceneAction('use', objectId || 'APPLIANCE_CoffeeMachine_01', text);
+  }
+  if (/\b(go to|walk to|move to|approach)\b/.test(normalized)) {
+    return dispatchSceneAction('moveTo', objectId, text);
   }
   if (/\b(read)\b/.test(normalized)) {
     return dispatchSceneAction('read', objectId, text);

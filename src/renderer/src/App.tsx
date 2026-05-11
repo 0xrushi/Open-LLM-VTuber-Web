@@ -109,6 +109,8 @@ function AppContent(): JSX.Element {
     return modelInfo.url.toLowerCase().endsWith(".vrm");
   }, [modelInfo?.url]);
 
+  const hasModelUrl = Boolean(modelInfo?.url);
+
   return (
     <>
       <Box
@@ -119,7 +121,7 @@ function AppContent(): JSX.Element {
           ? getResponsiveLive2DWindowStyle(showSidebar)
           : live2dPetStyle)}
       >
-        {isVrmModel ? (
+        {!hasModelUrl ? null : isVrmModel ? (
           <>
             <VrmViewer />
             {isVrmAvatarFile ? <MediaPipeController /> : null}

@@ -81,6 +81,10 @@ const createConfig = async (outDir: string) => ({
   ssr: {
     noExternal: ['vite-plugin-static-copy'],
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+  },
 });
 
 export default defineConfig(async ({ mode }) => {

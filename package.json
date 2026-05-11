@@ -22,7 +22,16 @@
     "build:linux": "electron-vite build && electron-builder --linux",
     "dev:web": "vite serve src/renderer --config vite.config.ts",
     "build:web": "vite build --config vite.config.ts --mode web",
-    "extract-translations": "i18next-scanner --config i18next-scanner.config.js"
+    "retarget:mixamo": "node ./scripts/retarget-mixamo.mjs",
+    "extract-translations": "i18next-scanner --config i18next-scanner.config.js",
+    "test": "vitest run"
+  },
+  "vitest": {
+    "environment": "jsdom",
+    "globals": true,
+    "alias": {
+      "@": "./src/renderer/src"
+    }
   },
   "dependencies": {
     "@chakra-ui/react": "^3.2.3",
@@ -35,6 +44,7 @@
     "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/holistic": "^0.5.1675471629",
     "@pixiv/three-vrm": "^3.2.3",
+    "@pixiv/three-vrm-animation": "^3.2.3",
     "@ricky0123/vad-web": "^0.0.24",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -53,26 +63,32 @@
     "react-icons": "^5.4.0",
     "rxjs": "^7.8.1",
     "three": "^0.164.0",
+    "vrm-mixamo-retarget": "^1.0.3",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^2.0.0",
     "@electron-toolkit/eslint-config-ts": "^2.0.0",
     "@electron-toolkit/tsconfig": "^1.0.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^20.14.8",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "@vitejs/plugin-react-swc": "^3.7.2",
+    "@vitest/ui": "^4.1.5",
     "electron": "^31.0.2",
     "electron-builder": "^24.13.3",
     "electron-vite": "^2.3.0",
     "eslint-plugin-react": "^7.34.3",
+    "jsdom": "^29.1.1",
     "prettier": "^3.3.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "~5.5.2",
     "vite": "^5.3.1",
-    "vite-plugin-static-copy": "^2.3.1"
+    "vite-plugin-static-copy": "^2.3.1",
+    "vitest": "^4.1.5"
   }
 }

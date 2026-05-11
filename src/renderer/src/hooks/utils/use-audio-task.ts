@@ -149,8 +149,16 @@ export const useAudioTask = () => {
         // Register with global audio manager
         audioManager.setCurrentAudio(audio, model);
         let isFinished = false;
+        let didStartVrmAudio = false;
+
+        const stopVrmAudio = () => {
+          if (!didStartVrmAudio) return;
+          didStartVrmAudio = false;
+          window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
+        };
 
         const cleanup = () => {
+          stopVrmAudio();
           audioManager.clearCurrentAudio(audio);
           if (!isFinished) {
             isFinished = true;
@@ -170,6 +178,7 @@ export const useAudioTask = () => {
           }
 
           console.log('Starting audio playback' + (hasLive2D ? ' with lip sync' : ' (VRM mode)'));
+          didStartVrmAudio = true;
           window.dispatchEvent(new CustomEvent('vrm-audio-start'));
           audio.play().catch((err) => {
             console.error("Audio play error:", err);
@@ -201,7 +210,6 @@ export const useAudioTask = () => {
 
         audio.addEventListener('ended', () => {
           console.log("Audio playback completed");
-          window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
           cleanup();
         });
 
