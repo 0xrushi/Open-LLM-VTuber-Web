@@ -47,7 +47,13 @@ interface VrmMotionMessage {
   worldQuaternion?: boolean;
 }
 
-export const MediaPipeController = () => {
+interface MediaPipeControllerProps {
+  showControls?: boolean;
+}
+
+export const MediaPipeController = ({
+  showControls = true,
+}: MediaPipeControllerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState('Initializing...');
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -334,42 +340,46 @@ export const MediaPipeController = () => {
   };
 
   return (
-    <Box
-      position="absolute"
-      top="20px"
-      left="20px"
-      zIndex={20}
-      bg="rgba(0,0,0,0.8)"
-      p={4}
-      borderRadius="md"
-      color="white"
-      width="250px"
-    >
-      <VStack align="stretch" gap={3}>
-        <Text fontSize="sm" color="green.400">{status}</Text>
-        
-        <Box>
-            <Text fontSize="xs" mb={1}>Upload Video File:</Text>
-            <Input 
-                type="file" 
-                accept="video/*" 
-                onChange={handleFileUpload} 
-                size="sm" 
+    <>
+      {showControls && (
+        <Box
+          position="absolute"
+          top="20px"
+          left="20px"
+          zIndex={20}
+          bg="rgba(0,0,0,0.8)"
+          p={4}
+          borderRadius="md"
+          color="white"
+          width="250px"
+        >
+          <VStack align="stretch" gap={3}>
+            <Text fontSize="sm" color="green.400">{status}</Text>
+
+            <Box>
+              <Text fontSize="xs" mb={1}>Upload Video File:</Text>
+              <Input
+                type="file"
+                accept="video/*"
+                onChange={handleFileUpload}
+                size="sm"
                 p={1}
                 bg="gray.700"
                 border="none"
                 height="auto"
-            />
+              />
+            </Box>
+
+            <Button size="sm" onClick={startWebcam} colorScheme="blue">
+              Switch to Webcam
+            </Button>
+
+            <Text fontSize="xs" color="gray.400">
+              Use the underlying VRM controls to move camera.
+            </Text>
+          </VStack>
         </Box>
-
-        <Button size="sm" onClick={startWebcam} colorScheme="blue">
-          Switch to Webcam
-        </Button>
-
-        <Text fontSize="xs" color="gray.400">
-            Use the underlying VRM controls to move camera.
-        </Text>
-      </VStack>
+      )}
 
       <video
         ref={videoRef}
@@ -379,6 +389,6 @@ export const MediaPipeController = () => {
         muted
         style={{ display: 'none' }}
       />
-    </Box>
+    </>
   );
 };

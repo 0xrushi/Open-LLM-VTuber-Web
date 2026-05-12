@@ -1,5 +1,5 @@
 import {
-  LuBell, LuSend, LuMic, LuMicOff, LuHand, LuX,
+  LuBell, LuEye, LuEyeOff, LuSend, LuMic, LuMicOff, LuHand, LuX,
 } from 'react-icons/lu';
 import {
   Box,
@@ -17,7 +17,15 @@ import { useDraggable } from '@/hooks/electron/use-draggable';
 import { inputSubtitleStyles } from './electron-style';
 import { useMode } from '@/context/mode-context';
 
-export function InputSubtitle() {
+interface InputSubtitleProps {
+  showFloatingControls?: boolean;
+  onToggleFloatingControls?: () => void;
+}
+
+export function InputSubtitle({
+  showFloatingControls = true,
+  onToggleFloatingControls,
+}: InputSubtitleProps) {
   const {
     inputValue,
     handleInputChange,
@@ -140,6 +148,13 @@ export function InputSubtitle() {
                 {...inputSubtitleStyles.iconButton}
               >
                 <LuHand size={16} />
+              </IconButton>
+              <IconButton
+                aria-label={showFloatingControls ? 'Hide floating controls' : 'Show floating controls'}
+                onClick={onToggleFloatingControls}
+                {...inputSubtitleStyles.iconButton}
+              >
+                {showFloatingControls ? <LuEye size={16} /> : <LuEyeOff size={16} />}
               </IconButton>
             </Flex>
           </Flex>

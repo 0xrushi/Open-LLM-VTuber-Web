@@ -27,23 +27,29 @@ import { GroupProvider } from "./context/group-context";
 import { BrowserProvider } from "./context/browser-context";
 // eslint-disable-next-line import/no-extraneous-dependencies, import/newline-after-import
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
+import { FiMenu } from "react-icons/fi";
 import Background from "./components/canvas/background";
 import WebSocketStatus from "./components/canvas/ws-status";
 import Subtitle from "./components/canvas/subtitle";
 import { ModeProvider, useMode } from "./context/mode-context";
+import ErrorBoundary from "./components/ui/error-boundary";
 
 function AppContent(): JSX.Element {
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(window.innerWidth > 1024);
   const [isFooterCollapsed, setIsFooterCollapsed] = useState(false);
+  const [showFloatingControls, setShowFloatingControls] = useState(true);
   const { mode } = useMode();
   const { modelInfo } = useLive2DConfig();
   const isElectron = window.api !== undefined;
   const live2dContainerRef = useRef<HTMLDivElement>(null);
 
+  const [isSmallScreen, setIsSmallScreen] = useState(window.innerWidth < 1024);
+
   useEffect(() => {
     const handleResize = () => {
       const vh = window.innerHeight * 0.01;
       document.documentElement.style.setProperty("--vh", `${vh}px`);
+      setIsSmallScreen(window.innerWidth < 1024);
     };
     handleResize();
     window.addEventListener("resize", handleResize);
@@ -76,11 +82,11 @@ function AppContent(): JSX.Element {
     zIndex: 5, // Ensure it's layered correctly below UI but above background
     left: {
       base: "0px", // Column layout (base): Start from left edge
-      md: sidebarVisible ? "440px" : "24px", // Row layout (md+): Offset by sidebar width
+      md: sidebarVisible ? "440px" : "0px", // Row layout (md+): Offset by sidebar width or full screen
     },
     width: {
       base: "100%", // Column layout (base): Full width
-      md: `calc(100% - ${sidebarVisible ? "440px" : "24px"})`, // Row layout (md+): Adjust width based on sidebar
+      md: sidebarVisible ? "calc(100% - 440px)" : "100%", // Row layout (md+): Adjust width based on sidebar
     },
   });
 
@@ -123,8 +129,10 @@ function AppContent(): JSX.Element {
       >
         {!hasModelUrl ? null : isVrmModel ? (
           <>
-            <VrmViewer />
-            {isVrmAvatarFile ? <MediaPipeController /> : null}
+            <VrmViewer showControls={showFloatingControls} />
+            {isVrmAvatarFile ? (
+              <MediaPipeController showControls={showFloatingControls} />
+            ) : null}
           </>
         ) : (
           <Live2D />
@@ -135,22 +143,55 @@ function AppContent(): JSX.Element {
       {mode === "window" && (
         <>
           {isElectron && <TitleBar />}
+          {isSmallScreen && !showSidebar && (
+            <Box
+              position="fixed"
+              top={isElectron ? "40px" : "10px"}
+              left="10px"
+              zIndex={100}
+              bg="gray.800"
+              p={2}
+              borderRadius="md"
+              cursor="pointer"
+              onClick={() => setShowSidebar(true)}
+              _hover={{ bg: "gray.700" }}
+              border="1px solid"
+              borderColor="whiteAlpha.200"
+              boxShadow="lg"
+            >
+              <FiMenu size={20} />
+            </Box>
+          )}
           {/* Apply styles by spreading */}
           <Flex {...layoutStyles.appContainer}>
             <Box
               {...layoutStyles.sidebar}
-              {...(!showSidebar && { width: "24px" })}
+              {...(isSmallScreen 
+                ? { 
+                    position: 'fixed', 
+                    top: isElectron ? '30px' : '0', 
+                    left: 0, 
+                    height: isElectron ? 'calc(100% - 30px)' : '100%',
+                    zIndex: 200,
+                    display: showSidebar ? 'block' : 'none',
+                    width: '100%',
+                    maxWidth: '300px'
+                  } 
+                : { width: showSidebar ? "440px" : "24px" }
+              )}
             >
               <Sidebar
                 isCollapsed={!showSidebar}
                 onToggle={() => setShowSidebar(!showSidebar)}
               />
             </Box>
-            <Box {...layoutStyles.mainContent}>
+            <Box {...layoutStyles.mainContent} ml={!isSmallScreen && showSidebar ? "0" : "0"}>
               <Background />
-              <Box position="absolute" top="20px" left="20px" zIndex={10}>
-                <WebSocketStatus />
-              </Box>
+              {showFloatingControls && (
+                <Box position="absolute" top="20px" left="20px" zIndex={10}>
+                  <WebSocketStatus />
+                </Box>
+              )}
               <Box
                 position="absolute"
                 bottom={isFooterCollapsed ? "39px" : "135px"}
@@ -169,6 +210,8 @@ function AppContent(): JSX.Element {
                 <Footer
                   isCollapsed={isFooterCollapsed}
                   onToggle={() => setIsFooterCollapsed(!isFooterCollapsed)}
+                  showFloatingControls={showFloatingControls}
+                  onToggleFloatingControls={() => setShowFloatingControls((value) => !value)}
                 />
               </Box>
             </Box>
@@ -177,7 +220,12 @@ function AppContent(): JSX.Element {
       )}
 
       {/* Conditional Rendering of Pet Mode UI */}
-      {mode === "pet" && <InputSubtitle />}
+      {mode === "pet" && (
+        <InputSubtitle
+          showFloatingControls={showFloatingControls}
+          onToggleFloatingControls={() => setShowFloatingControls((value) => !value)}
+        />
+      )}
     </>
   );
 }
@@ -211,7 +259,9 @@ function AppWithGlobalStyles(): JSX.Element {
                             <BrowserProvider>
                               <WebSocketHandler>
                                 <Toaster />
-                                <AppContent />
+                                <ErrorBoundary>
+                                  <AppContent />
+                                </ErrorBoundary>
                               </WebSocketHandler>
                             </BrowserProvider>
                           </GroupProvider>

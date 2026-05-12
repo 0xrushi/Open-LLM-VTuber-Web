@@ -75,6 +75,7 @@ export interface ClipPlaybackOptions {
   armRotationMultiplier?: number;
   holdFirstFrame?: boolean;
   onSettled?: () => void;
+  actionId?: string;
 }
 
 export interface SeatedRapierHarness {

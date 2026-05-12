@@ -115,7 +115,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         // setModelInfo(message.model_info);
         // We don't know when the confRef in live2d-config-context will be updated, so we set a delay here for convenience
         if (message.model_info && !message.model_info.url.startsWith("http")) {
-          const modelUrl = baseUrl + message.model_info.url;
+          const modelUrl = baseUrl + (message.model_info.url.startsWith("/") ? "" : "/") + message.model_info.url;
           // eslint-disable-next-line no-param-reassign
           message.model_info.url = modelUrl;
         }
@@ -219,6 +219,15 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         if (message.text) {
           appendHumanMessage(message.text);
         }
+        break;
+      case 'scene-action':
+        window.dispatchEvent(new CustomEvent('ai-scene-action', {
+          detail: {
+            action: message.action,
+            objectId: message.objectId,
+            sourceText: message.sourceText,
+          },
+        }));
         break;
       case 'error':
         toaster.create({

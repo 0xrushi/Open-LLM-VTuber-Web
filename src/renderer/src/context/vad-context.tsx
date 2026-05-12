@@ -300,6 +300,15 @@ export function VADProvider({ children }: { children: React.ReactNode }) {
    */
   const startMic = useCallback(async () => {
     try {
+      // Check for secure context (HTTPS or localhost) - required for getUserMedia
+      if (!window.isSecureContext) {
+        throw new Error("Microphone requires HTTPS. Please access via https:// instead of http://. If you see a security warning, click 'Advanced' and 'Proceed'.");
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Microphone API (getUserMedia) is not supported or blocked in this browser.");
+      }
+
       if (!vadRef.current) {
         console.log('Initializing VAD');
         await initVAD();
@@ -308,15 +317,27 @@ export function VADProvider({ children }: { children: React.ReactNode }) {
         vadRef.current.start();
       }
       setMicOn(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to start VAD:', error);
+      
+      let errorMessage = error.message || String(error);
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        errorMessage = "Microphone permission denied. Please allow microphone access in your browser settings.";
+        if (/Android/i.test(navigator.userAgent) && /Firefox/i.test(navigator.userAgent)) {
+          errorMessage += " In Firefox Android, check 'Site permissions' in the menu.";
+        }
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        errorMessage = "No microphone found. Please ensure a microphone is connected.";
+      }
+
       toaster.create({
-        title: `${t('error.failedStartVAD')}: ${error}`,
+        title: t('error.failedStartVAD'),
+        description: errorMessage,
         type: 'error',
-        duration: 2000,
+        duration: 5000,
       });
     }
-  }, [t]);
+  }, [t, settings]);
 
   /**
    * Stop microphone and VAD processing

@@ -46,7 +46,7 @@ import { useNamiStudioObjectDragSnap } from './use-nami-studio-object-drag-snap'
 describe('debug', () => {
   beforeEach(() => {
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} });
-    vi.stubGlobal('dispatchEvent', () => true);
+    vi.spyOn(window, 'dispatchEvent');
     vi.clearAllMocks();
   });
   afterEach(() => { vi.unstubAllGlobals(); });

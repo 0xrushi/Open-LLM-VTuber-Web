@@ -26,6 +26,7 @@ import {
   DANCE_VRMA_ANIMATIONS,
   ANIMATION_HIERARCHY,
 } from '../constants';
+import { ACTION_GRAPH, AnimationLayer } from '../action-graph';
 
 export const useVrmSceneActions = (
   vrmRef: React.MutableRefObject<VRM | null>,
@@ -41,17 +42,19 @@ export const useVrmSceneActions = (
   isDancingRef: React.MutableRefObject<boolean>,
   isSpecialActionRef: React.MutableRefObject<boolean>,
   specialActionNameRef: React.MutableRefObject<string | null>,
+  danceAudioRef: React.MutableRefObject<HTMLAudioElement | null>,
+  kissAudioRef: React.MutableRefObject<HTMLAudioElement | null>,
   sceneObjectBaseTransformRef: React.MutableRefObject<Map<string, any>>,
   lanternLitRef: React.MutableRefObject<boolean>,
   stopPoseIdle: () => void,
   stopProcedural: () => void,
-  stopVrma: () => void,
+  stopAllAnimations: () => void,
   disposeSeatedRapier: () => void,
   ensureRapierReady: () => Promise<void>,
   createSeatedRapierHarness: (point: [number, number, number]) => void,
   playVrmRetargetedFbxFromUrl: (url: string, options?: ClipPlaybackOptions) => boolean,
   playMixamoFbxFromUrl: (url: string, options?: ClipPlaybackOptions) => void,
-  playVrmaFromUrl: (url: string, options?: ClipPlaybackOptions) => Promise<void>,
+  playVrmaFromUrl: (url: string, options?: ClipPlaybackOptions, layer?: AnimationLayer) => Promise<void>,
   resetAllBones: () => void,
   playStateAnimFbx: (url: string) => void,
   startPoseIdle: (bones: LogicalBone[]) => void,
@@ -157,6 +160,10 @@ export const useVrmSceneActions = (
     stopPoseIdle();
     stopProcedural();
     isSleepingRef.current = false;
+    if (danceAudioRef.current) {
+      danceAudioRef.current.pause();
+      danceAudioRef.current.currentTime = 0;
+    }
     disposeSeatedRapier();
     seatedContactRef.current = {
       objectId,
@@ -215,7 +222,7 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, modelBasePositionRef, stopPoseIdle, stopProcedural, isSleepingRef, disposeSeatedRapier, seatedContactRef, ensureRapierReady, createSeatedRapierHarness, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, playVrmaFromUrl, startPoseIdle]);
+  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, modelBasePositionRef, stopPoseIdle, stopProcedural, isSleepingRef, disposeSeatedRapier, seatedContactRef, ensureRapierReady, createSeatedRapierHarness, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, playVrmaFromUrl, startPoseIdle, danceAudioRef]);
 
   const sleepOnSceneObject = useCallback((objectId: string) => {
     const target = getAiSceneObject(objectId);
@@ -238,6 +245,10 @@ export const useVrmSceneActions = (
     seatedContactRef.current = null;
     sleepTargetRef.current = null;
     isSleepingRef.current = true;
+    if (danceAudioRef.current) {
+      danceAudioRef.current.pause();
+      danceAudioRef.current.currentTime = 0;
+    }
 
     const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
     const SLEEP_YAW_ALIGNMENT_OFFSET = -Math.PI / 2;
@@ -310,7 +321,7 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, modelBasePositionRef, playVrmaFromUrl]);
+  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, modelBasePositionRef, playVrmaFromUrl, danceAudioRef]);
 
   const startWalkingToSceneObject = useCallback((entry: SceneObjectRegistryEntry, onArrive?: () => boolean | void) => {
     const root = getCurrentModelRoot();
@@ -359,9 +370,13 @@ export const useVrmSceneActions = (
     sleepTargetRef.current = null;
     disposeSeatedRapier();
     isDancingRef.current = false;
+    if (danceAudioRef.current) {
+      danceAudioRef.current.pause();
+      danceAudioRef.current.currentTime = 0;
+    }
     stopPoseIdle();
     stopProcedural();
-    stopVrma();
+    stopAllAnimations();
     resetAllBones();
 
     if (root) {
@@ -388,10 +403,13 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [getCurrentModelRoot, seatedContactRef, sleepTargetRef, disposeSeatedRapier, isDancingRef, stopPoseIdle, stopProcedural, stopVrma, resetAllBones, modelBasePositionRef, vrmRef, playStateAnimFbx, isSleepingRef]);
+  }, [getCurrentModelRoot, seatedContactRef, sleepTargetRef, disposeSeatedRapier, isDancingRef, stopPoseIdle, stopProcedural, stopAllAnimations, resetAllBones, modelBasePositionRef, vrmRef, playStateAnimFbx, isSleepingRef, danceAudioRef]);
 
-  const playRandomAnimation = useCallback((category: string, options?: ClipPlaybackOptions) => {
-    const resolvedCategory = ACTION_CATEGORY_ALIASES[category] ?? category;
+  const playRandomAnimation = useCallback((actionId: string, options?: ClipPlaybackOptions) => {
+    const node = ACTION_GRAPH[actionId] || ACTION_GRAPH[ACTION_CATEGORY_ALIASES[actionId]];
+    const resolvedCategory = node?.category ?? actionId;
+    const layer = node?.layer ?? 'body';
+
     const cat = ANIMATION_HIERARCHY[resolvedCategory];
     if (!cat) {
       console.warn(`[VrmViewer] Animation category "${resolvedCategory}" not found.`);
@@ -406,19 +424,36 @@ export const useVrmSceneActions = (
       return;
     }
 
+    const finalOptions = { ...options };
+    if (node?.autoTrigger) {
+      const originalSettled = options?.onSettled;
+      finalOptions.onSettled = () => {
+        originalSettled?.();
+        console.log(`[VrmViewer] Auto-triggering ${node.autoTrigger} after ${actionId}`);
+        // Small delay to ensure previous action cleanup
+        setTimeout(() => {
+          if (node.autoTrigger === 'idle') {
+            playStateAnimFbx('/models/animations/Idle.fbx');
+          } else {
+            playRandomAnimation(node.autoTrigger!);
+          }
+        }, 50);
+      };
+    }
+
     if (vrmRef.current && hasVrma) {
       const url = cat.vrma![Math.floor(Math.random() * cat.vrma!.length)];
-      void playVrmaFromUrl(url);
+      void playVrmaFromUrl(url, finalOptions, (layer as AnimationLayer));
     } else if (hasFbx) {
       const url = cat.fbx![Math.floor(Math.random() * cat.fbx!.length)];
       if (vrmRef.current) {
-        const didUseVrmRetarget = playVrmRetargetedFbxFromUrl(url, options);
+        const didUseVrmRetarget = playVrmRetargetedFbxFromUrl(url, finalOptions);
         if (!didUseVrmRetarget) throw new Error(`[VrmViewer] Retargeted FBX unavailable for ${url}`);
       } else {
-        playMixamoFbxFromUrl(url, options);
+        playMixamoFbxFromUrl(url, finalOptions);
       }
     }
-  }, [vrmRef, playVrmaFromUrl, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl]);
+  }, [vrmRef, playVrmaFromUrl, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, playStateAnimFbx]);
 
   const playRandomDance = useCallback(() => {
     stopPoseIdle();
@@ -428,6 +463,11 @@ export const useVrmSceneActions = (
     sleepTargetRef.current = null;
     isSleepingRef.current = false;
     isDancingRef.current = true;
+
+    if (danceAudioRef.current) {
+      danceAudioRef.current.currentTime = 0;
+      danceAudioRef.current.play().catch((e) => console.warn('[VrmViewer] Audio play failed:', e));
+    }
 
     const playback: ClipPlaybackOptions = {
       loopOnce: false,
@@ -447,10 +487,10 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, isDancingRef, playRandomAnimation]);
+  }, [stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, isDancingRef, playRandomAnimation, danceAudioRef]);
 
   const playKiss = useCallback(() => {
-    stopVrma();
+    stopAllAnimations();
     stopPoseIdle();
     stopProcedural();
     disposeSeatedRapier();
@@ -458,8 +498,21 @@ export const useVrmSceneActions = (
     sleepTargetRef.current = null;
     isSleepingRef.current = false;
     isDancingRef.current = false;
+    if (danceAudioRef.current) {
+      danceAudioRef.current.pause();
+      danceAudioRef.current.currentTime = 0;
+    }
+    if (kissAudioRef.current) {
+      kissAudioRef.current.pause();
+      kissAudioRef.current.currentTime = 0;
+    }
     isSpecialActionRef.current = true;
     specialActionNameRef.current = 'kiss';
+
+    if (kissAudioRef.current) {
+      kissAudioRef.current.currentTime = 0;
+      kissAudioRef.current.play().catch((e) => console.warn('[VrmViewer] Kiss audio play failed:', e));
+    }
 
     const onSettled = () => {
       isSpecialActionRef.current = false;
@@ -493,7 +546,7 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [vrmRef, stopVrma, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, isDancingRef, isSpecialActionRef, specialActionNameRef, playRandomAnimation, startPoseIdle]);
+  }, [vrmRef, stopAllAnimations, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, isDancingRef, isSpecialActionRef, specialActionNameRef, playRandomAnimation, startPoseIdle, danceAudioRef, kissAudioRef]);
 
   const animateSceneObjectOpenState = useCallback((entry: SceneObjectRegistryEntry, open: boolean) => {
     const object = getSceneObject3D(entry.id);
@@ -599,6 +652,10 @@ export const useVrmSceneActions = (
           sleepTargetRef.current = null;
           isSleepingRef.current = false;
           isDancingRef.current = false;
+          if (danceAudioRef.current) {
+            danceAudioRef.current.pause();
+            danceAudioRef.current.currentTime = 0;
+          }
           focusCameraOnSceneObject(entry);
           if (vrmRef.current) {
             void playVrmaFromUrl(WALKING_VRMA_URL, { includeHipsPosition: false });
@@ -658,7 +715,7 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [getAiSceneObject, focusCameraOnSceneObject, sitOnSceneObject, sleepOnSceneObject, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, isDancingRef, vrmRef, playVrmaFromUrl, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, animateSceneObjectOpenState, getSceneObject3D, lanternLitRef, sceneRef, startWalkingToSceneObject, moveAvatarToSceneObject]);
+  }, [getAiSceneObject, focusCameraOnSceneObject, sitOnSceneObject, sleepOnSceneObject, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, isDancingRef, vrmRef, playVrmaFromUrl, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, animateSceneObjectOpenState, getSceneObject3D, lanternLitRef, sceneRef, startWalkingToSceneObject, moveAvatarToSceneObject, danceAudioRef]);
 
   return {
     getCurrentModelRoot,

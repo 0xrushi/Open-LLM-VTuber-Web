@@ -3,6 +3,7 @@ import { Vec3 } from '../types';
 import { PoseCorrectionPanel } from './pose-correction-panel';
 import { AnimationPanel } from './animation-panel';
 import { RigDebugPanel } from './rig-debug-panel';
+import { ActionGraphVisualizer } from './action-graph-visualizer';
 
 interface UiOverlayProps {
   invertLegs: boolean;
@@ -169,6 +170,8 @@ export const UiOverlay: React.FC<UiOverlayProps> = (props) => {
         onApplyRig={props.onApplyRig}
         isAnyAnimationPlaying={isAnyAnimationPlaying}
       />
+      <div style={{ height: '1px', background: 'rgba(255,255,255,0.3)', margin: '4px 0' }}></div>
+      <ActionGraphVisualizer />
     </div>
   );
 };

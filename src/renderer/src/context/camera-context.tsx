@@ -70,6 +70,10 @@ export function CameraProvider({ children }: { children: ReactNode }) {
   // Start camera stream
   const startCamera = useCallback(async () => {
     try {
+      if (!window.isSecureContext) {
+        throw new Error("Camera access requires a secure context (HTTPS or localhost).");
+      }
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error(t('error.cameraApiNotSupported'));
       }
@@ -115,6 +119,10 @@ export function CameraProvider({ children }: { children: ReactNode }) {
 
   const startBackgroundCamera = useCallback(async () => {
     try {
+      if (!window.isSecureContext) {
+        throw new Error("Camera access requires a secure context (HTTPS or localhost).");
+      }
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error(t('error.cameraApiNotSupported'));
       }

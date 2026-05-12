@@ -2,7 +2,9 @@
 import {
   Box, Textarea, IconButton, HStack,
 } from '@chakra-ui/react';
-import { BsMicFill, BsMicMuteFill, BsPaperclip } from 'react-icons/bs';
+import {
+  BsEye, BsEyeSlash, BsMicFill, BsMicMuteFill, BsPaperclip,
+} from 'react-icons/bs';
 import { IoHandRightSharp } from 'react-icons/io5';
 import { FiChevronDown } from 'react-icons/fi';
 import { memo } from 'react';
@@ -16,6 +18,8 @@ import { useFooter } from '@/hooks/footer/use-footer';
 interface FooterProps {
   isCollapsed?: boolean
   onToggle?: () => void
+  showFloatingControls?: boolean
+  onToggleFloatingControls?: () => void
 }
 
 interface ToggleButtonProps {
@@ -27,6 +31,8 @@ interface ActionButtonsProps {
   micOn: boolean
   onMicToggle: () => void
   onInterrupt: () => void
+  showFloatingControls: boolean
+  onToggleFloatingControls?: () => void
 }
 
 interface MessageInputProps {
@@ -53,9 +59,16 @@ const ToggleButton = memo(({ isCollapsed, onToggle }: ToggleButtonProps) => (
 
 ToggleButton.displayName = 'ToggleButton';
 
-const ActionButtons = memo(({ micOn, onMicToggle, onInterrupt }: ActionButtonsProps) => (
+const ActionButtons = memo(({
+  micOn,
+  onMicToggle,
+  onInterrupt,
+  showFloatingControls,
+  onToggleFloatingControls,
+}: ActionButtonsProps) => (
   <HStack gap={2}>
     <IconButton
+      aria-label="Toggle microphone"
       bg={micOn ? 'green.500' : 'red.500'}
       {...footerStyles.footer.actionButton}
       onClick={onMicToggle}
@@ -69,6 +82,14 @@ const ActionButtons = memo(({ micOn, onMicToggle, onInterrupt }: ActionButtonsPr
       onClick={onInterrupt}
     >
       <IoHandRightSharp size="24" />
+    </IconButton>
+    <IconButton
+      aria-label={showFloatingControls ? 'Hide floating controls' : 'Show floating controls'}
+      bg={showFloatingControls ? 'blue.500' : 'gray.600'}
+      {...footerStyles.footer.actionButton}
+      onClick={onToggleFloatingControls}
+    >
+      {showFloatingControls ? <BsEye size="24" /> : <BsEyeSlash size="24" />}
     </IconButton>
   </HStack>
 ));
@@ -111,7 +132,12 @@ const MessageInput = memo(({
 MessageInput.displayName = 'MessageInput';
 
 // Main component
-function Footer({ isCollapsed = false, onToggle }: FooterProps): JSX.Element {
+function Footer({
+  isCollapsed = false,
+  onToggle,
+  showFloatingControls = true,
+  onToggleFloatingControls,
+}: FooterProps): JSX.Element {
   const {
     inputValue,
     handleInputChange,
@@ -137,6 +163,8 @@ function Footer({ isCollapsed = false, onToggle }: FooterProps): JSX.Element {
               micOn={micOn}
               onMicToggle={handleMicToggle}
               onInterrupt={handleInterrupt}
+              showFloatingControls={showFloatingControls}
+              onToggleFloatingControls={onToggleFloatingControls}
             />
           </Box>
 

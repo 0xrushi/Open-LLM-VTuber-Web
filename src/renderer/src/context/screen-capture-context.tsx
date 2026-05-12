@@ -20,6 +20,10 @@ export function ScreenCaptureProvider({ children }: { children: ReactNode }) {
 
   const startCapture = async () => {
     try {
+      if (!window.isSecureContext) {
+        throw new Error("Screen capture requires a secure context (HTTPS or localhost).");
+      }
+
       let mediaStream: MediaStream;
 
       if (window.electron) {

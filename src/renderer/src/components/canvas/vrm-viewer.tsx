@@ -33,6 +33,7 @@ import {
   THINKING_VRMA_URL,
   ANIMATION_HIERARCHY,
 } from './vrm-viewer/constants';
+import { ACTION_GRAPH } from './vrm-viewer/action-graph';
 import {
   LogicalBone,
   Vec3,
@@ -52,12 +53,18 @@ const setVrmMouth = (vrm: VRM, aaValue: number) => {
   }
 };
 
-export const VrmViewer = memo(() => {
+interface VrmViewerProps {
+  showControls?: boolean;
+}
+
+export const VrmViewer = memo(({ showControls = true }: VrmViewerProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const requestRef = useRef<number>();
   const vrmAudioPlayingRef = useRef(false);
   const animationFrozenRef = useRef(false);
   const frozenRigOverridesRef = useRef<Map<string, { rotDeg: Vec3; pos: Vec3 }>>(new Map());
+  const danceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const kissAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isAnimationFrozen, setIsAnimationFrozen] = useState(false);
 
   const { modelInfo } = useLive2DConfig();
@@ -94,8 +101,41 @@ export const VrmViewer = memo(() => {
 
   // Hooks
   const {
-    sceneRef, rendererRef, cameraRef, controlsRef, setupScene, cleanupScene
+    sceneRef, rendererRef, cameraRef, controlsRef, setupScene, resize, cleanupScene
   } = useVrmScene();
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          resize(width, height);
+        }
+      }
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [resize]);
+
+  useEffect(() => {
+    danceAudioRef.current = new Audio('/audio/dance_music.wav');
+    danceAudioRef.current.loop = true;
+    kissAudioRef.current = new Audio('/audio/kiss.wav');
+    return () => {
+      if (danceAudioRef.current) {
+        danceAudioRef.current.pause();
+        danceAudioRef.current = null;
+      }
+      if (kissAudioRef.current) {
+        kissAudioRef.current.pause();
+        kissAudioRef.current = null;
+      }
+    };
+  }, []);
 
   const {
     vrmRef, glbModelRef, roomModelRef, glbBonesRef, glbBonesNormalizedRef,
@@ -107,8 +147,9 @@ export const VrmViewer = memo(() => {
   const {
     mixerRef, animMgrRef, currentStateAnimUrlRef, isVrmaPlaying, setIsVrmaPlaying,
     isVrmaPlayingRef, setSelectedClipName, setClipNames, clipNames, selectedClipName,
-    configureActionPlayback, playClipOnCurrentModel, stopAllAnimations, pauseAllAnimations, resumePausedAnimation,
-    currentActionRef, loadedClipsRef
+    configureActionPlayback, playClipOnCurrentModel, stopAllAnimations, stopLayerAnimation,
+    pauseAllAnimations, resumePausedAnimation,
+    activeActionsRef, activeActionIdsRef, loadedClipsRef
   } = animationHooks;
 
   const stateHooks = useVrmState();
@@ -137,7 +178,7 @@ export const VrmViewer = memo(() => {
 
   const loadHandlers = useVrmLoadHandlers(
     vrmRef, glbModelRef, glbBonesRef, glbBonesNormalizedRef, glbSkinnedMeshesRef,
-    mixerRef, currentActionRef, loadedClipsRef, setIsVrmaPlaying,
+    mixerRef, activeActionsRef, loadedClipsRef, setIsVrmaPlaying,
     setClipNames, setSelectedClipName, rebuildGlbBoneIndices, initialBoneTransformsRef,
     setRigBones, stateHooks.setSelectedBone, setRigModelStamp,
     configureActionPlayback, playClipOnCurrentModel
@@ -156,19 +197,22 @@ export const VrmViewer = memo(() => {
     if (!vrmRef.current) return;
     animationFrozenRef.current = false;
     setIsAnimationFrozen(false);
-    if (currentStateAnimUrlRef.current === url && currentActionRef.current) return;
+    
+    // Check if we are already playing this URL in any layer (though state anims are usually base)
+    if (currentStateAnimUrlRef.current === url) return;
+    
     currentStateAnimUrlRef.current = url;
     if (animMgrRef.current) animMgrRef.current.isMixamoPlaying = true;
     if (url.toLowerCase().endsWith('/idle.fbx')) {
-      playVrmaFromUrl(IDLE_VRMA_URL);
+      playVrmaFromUrl(IDLE_VRMA_URL, {}, 'base');
       return;
     }
     if (url.toLowerCase().endsWith('/thinking.fbx')) {
-      playVrmaFromUrl(THINKING_VRMA_URL);
+      playVrmaFromUrl(THINKING_VRMA_URL, {}, 'base');
       return;
     }
     if (url.toLowerCase().endsWith('/walkinganimation.fbx')) {
-      playVrmaFromUrl(WALKING_VRMA_URL, { includeHipsPosition: false });
+      playVrmaFromUrl(WALKING_VRMA_URL, { includeHipsPosition: false }, 'base');
       return;
     }
     const isIdle = url.toLowerCase().endsWith('/idle.fbx');
@@ -177,7 +221,7 @@ export const VrmViewer = memo(() => {
       includeHipsPosition: true,
       disableZRollStripping: true,
     } : undefined);
-  }, [vrmRef, playVrmRetargetedFbxFromUrl, playVrmaFromUrl, currentStateAnimUrlRef, animMgrRef, currentActionRef]);
+  }, [vrmRef, playVrmRetargetedFbxFromUrl, playVrmaFromUrl, currentStateAnimUrlRef, animMgrRef]);
 
   const startPoseIdleInternal = useCallback((keys: LogicalBone[]) => {
     stopPoseIdle();
@@ -200,7 +244,7 @@ export const VrmViewer = memo(() => {
   const sceneActions = useVrmSceneActions(
     vrmRef, glbModelRef, roomModelRef, sceneRef, controlsRef, modelBasePositionRef,
     seatedContactRef, walkTargetRef, sleepTargetRef, isSleepingRef, isDancingRef, isSpecialActionRef, specialActionNameRef,
-    sceneObjectBaseTransformRef, lanternLitRef, stopPoseIdle, stopProcedural, stopAllAnimations,
+    danceAudioRef, kissAudioRef, sceneObjectBaseTransformRef, lanternLitRef, stopPoseIdle, stopProcedural, stopAllAnimations,
     disposeSeatedRapier, ensureRapierReady, createSeatedRapierHarness,
     playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, playVrmaFromUrl, resetAllBones,
     playStateAnimFbx, startPoseIdleInternal
@@ -287,7 +331,7 @@ export const VrmViewer = memo(() => {
   const keepWalkingAnimationActive = useCallback(() => {
     animationFrozenRef.current = false;
     setIsAnimationFrozen(false);
-    const action = currentActionRef.current;
+    const action = activeActionsRef.current.get('base');
     if (action) {
       configureActionPlayback(action);
       action.enabled = true;
@@ -303,8 +347,8 @@ export const VrmViewer = memo(() => {
     }
 
     currentStateAnimUrlRef.current = WALKING_FBX_URL;
-    playVrmaFromUrl(WALKING_VRMA_URL, { includeHipsPosition: false });
-  }, [configureActionPlayback, playVrmaFromUrl, currentActionRef, currentStateAnimUrlRef]);
+    playVrmaFromUrl(WALKING_VRMA_URL, { includeHipsPosition: false }, 'base');
+  }, [configureActionPlayback, playVrmaFromUrl, activeActionsRef, currentStateAnimUrlRef]);
 
   const handleStopVrma = useCallback(() => {
     animationFrozenRef.current = true;
@@ -326,11 +370,19 @@ export const VrmViewer = memo(() => {
     disposeSeatedRapier();
     stopPoseIdle(true);
     stopProcedural(true);
+    if (danceAudioRef.current) {
+      danceAudioRef.current.pause();
+      danceAudioRef.current.currentTime = 0;
+    }
+    if (kissAudioRef.current) {
+      kissAudioRef.current.pause();
+      kissAudioRef.current.currentTime = 0;
+    }
   }, [
     pauseAllAnimations,
     walkTargetRef, seatedContactRef, sleepTargetRef, isSleepingRef, isDancingRef,
     isSpecialActionRef, specialActionNameRef, setIsSleeping, setIsDancing,
-    disposeSeatedRapier, stopPoseIdle, stopProcedural, stateHooks.selectedBone, updateRigStateFromBone
+    disposeSeatedRapier, stopPoseIdle, stopProcedural, stateHooks.selectedBone, updateRigStateFromBone, danceAudioRef, kissAudioRef
   ]);
 
   const handleResumeAnimation = useCallback(() => {
@@ -378,6 +430,17 @@ export const VrmViewer = memo(() => {
         am.isSleeping = isSleepingRef.current;
         am.isSpecialAction = isSpecialActionRef.current;
         am.isSpeaking = vrmAudioPlayingRef.current;
+
+        // Determine if procedural motion should be suppressed
+        let shouldSuppressProcedural = false;
+        activeActionIdsRef.current.forEach((actionId) => {
+          const node = ACTION_GRAPH[actionId];
+          if (node?.disablesIdleProcedural) {
+            shouldSuppressProcedural = true;
+          }
+        });
+        am.setProceduralDisabled(shouldSuppressProcedural);
+
         am.update(dt);
       }
 
@@ -586,7 +649,7 @@ export const VrmViewer = memo(() => {
     };
   }, [
     mixerRef, vrmRef, glbModelRef, animMgrRef, isVrmaPlayingRef, isDancingRef, isSpecialActionRef, specialActionNameRef,
-    walkTargetRef, sleepTargetRef, isSleepingRef, currentActionRef, modelBasePositionRef, playStateAnimFbx, proceduralActiveRef,
+    walkTargetRef, sleepTargetRef, isSleepingRef, activeActionsRef, activeActionIdsRef, modelBasePositionRef, playStateAnimFbx, proceduralActiveRef,
     proceduralStartRef, proceduralNodesRef, proceduralBaseQuatRef, poseIdleActiveRef,
     poseIdleStartRef, poseIdleNodesRef, poseIdleBaseQuatRef, rendererRef, sceneRef,
     cameraRef, controlsRef, keepWalkingAnimationActive, startPoseIdleInternal, getBoneNode, applyFrozenRigOverrides
@@ -890,24 +953,26 @@ export const VrmViewer = memo(() => {
 
   return (
     <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
-      <UiOverlay
-        {...stateHooks}
-        rigBones={rigBones}
-        onApplyPoseProfile={applyPoseProfile}
-        onCopyPose={copyPose}
-        clipNames={clipNames}
-        selectedClipName={selectedClipName}
-        onClipSelect={setSelectedClipName}
-        isProceduralPlaying={proceduralHooks.isProceduralPlaying}
-        onStartProcedural={() => {}}
-        onStopProcedural={stopProcedural}
-        isVrmaPlaying={isVrmaPlaying}
-        isAnimationFrozen={isAnimationFrozen}
-        onStopVrma={handleStopVrma}
-        onResumeAnimation={handleResumeAnimation}
-        setRigPos={stateHooks.setRigPos}
-        onApplyRig={handleApplyRigToBone}
-      />
+      {showControls && (
+        <UiOverlay
+          {...stateHooks}
+          rigBones={rigBones}
+          onApplyPoseProfile={applyPoseProfile}
+          onCopyPose={copyPose}
+          clipNames={clipNames}
+          selectedClipName={selectedClipName}
+          onClipSelect={setSelectedClipName}
+          isProceduralPlaying={proceduralHooks.isProceduralPlaying}
+          onStartProcedural={() => {}}
+          onStopProcedural={stopProcedural}
+          isVrmaPlaying={isVrmaPlaying}
+          isAnimationFrozen={isAnimationFrozen}
+          onStopVrma={handleStopVrma}
+          onResumeAnimation={handleResumeAnimation}
+          setRigPos={stateHooks.setRigPos}
+          onApplyRig={handleApplyRigToBone}
+        />
+      )}
     </div>
   );
 });

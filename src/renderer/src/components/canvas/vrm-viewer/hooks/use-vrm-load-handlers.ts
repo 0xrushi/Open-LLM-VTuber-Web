@@ -15,6 +15,7 @@ import {
   CHARACTER_BLUE_ANIMATIONS,
 } from '../constants';
 import { ClipPlaybackOptions } from '../types';
+import { AnimationLayer } from '../action-graph';
 
 export const useVrmLoadHandlers = (
   vrmRef: React.MutableRefObject<VRM | null>,
@@ -23,7 +24,7 @@ export const useVrmLoadHandlers = (
   glbBonesNormalizedRef: React.MutableRefObject<Map<string, THREE.Bone>>,
   glbSkinnedMeshesRef: React.MutableRefObject<THREE.SkinnedMesh[]>,
   mixerRef: React.MutableRefObject<THREE.AnimationMixer | null>,
-  currentActionRef: React.MutableRefObject<THREE.AnimationAction | null>,
+  activeActionsRef: React.MutableRefObject<Map<AnimationLayer, THREE.AnimationAction>>,
   loadedClipsRef: React.MutableRefObject<THREE.AnimationClip[]>,
   setIsVrmaPlaying: (val: boolean) => void,
   setClipNames: (names: string[]) => void,
@@ -34,7 +35,7 @@ export const useVrmLoadHandlers = (
   setSelectedBone: (bone: string) => void,
   setRigModelStamp: (val: (v: number) => number) => void,
   configureActionPlayback: (action: THREE.AnimationAction, options?: ClipPlaybackOptions) => void,
-  playClipOnCurrentModel: (root: THREE.Object3D | null, skinned: THREE.SkinnedMesh | null, clip: THREE.AnimationClip, options?: ClipPlaybackOptions) => void,
+  playClipOnCurrentModel: (root: THREE.Object3D | null, skinned: THREE.SkinnedMesh | null, clip: THREE.AnimationClip, options?: ClipPlaybackOptions, layer?: AnimationLayer) => void,
 ) => {
 
   const retargetMixamoClipToCurrentModel = useCallback((clip: THREE.AnimationClip): THREE.AnimationClip | null => {
@@ -146,7 +147,7 @@ export const useVrmLoadHandlers = (
     return new THREE.AnimationClip(clip.name || 'mixamo', clip.duration, tracks);
   }, [vrmRef, glbBonesRef, glbBonesNormalizedRef]);
 
-  const playMixamoFbxFromUrl = useCallback((url: string, options?: ClipPlaybackOptions) => {
+  const playMixamoFbxFromUrl = useCallback((url: string, options?: ClipPlaybackOptions, layer: AnimationLayer = 'body') => {
     const loader = new FBXLoader();
     loader.load(
       url,
@@ -160,7 +161,7 @@ export const useVrmLoadHandlers = (
         // Always use compensated Mixamo->VRM retarget math to avoid limb inversion.
         if (isVRM && vrm) {
           loadMixamoAnimForVRM(url, vrm, options).then((retargetedClip) => {
-            playClipOnCurrentModel(vrm.scene, null, retargetedClip, options);
+            playClipOnCurrentModel(vrm.scene, null, retargetedClip, options, layer);
           }).catch((error) => {
             console.error('[VrmViewer] VRM safe retarget fallback failed:', error);
           });
@@ -234,7 +235,7 @@ export const useVrmLoadHandlers = (
                   cleaned.push(t);
                 }
                 converted = new THREE.AnimationClip(clip.name || 'mixamo', clip.duration, cleaned);
-                playClipOnCurrentModel(vrmRef.current?.scene || null, targetMesh, converted, options);
+                playClipOnCurrentModel(vrmRef.current?.scene || null, targetMesh, converted, options, layer);
                 return;
               }
             } catch (e) {
@@ -245,7 +246,7 @@ export const useVrmLoadHandlers = (
 
         const retargeted = retargetMixamoClipToCurrentModel(clip);
         if (retargeted) {
-          playClipOnCurrentModel(vrmRef.current?.scene || glbModelRef.current, glbSkinnedMeshesRef.current[0] || null, retargeted, options);
+          playClipOnCurrentModel(vrmRef.current?.scene || glbModelRef.current, glbSkinnedMeshesRef.current[0] || null, retargeted, options, layer);
         }
       },
       undefined,
@@ -264,14 +265,14 @@ export const useVrmLoadHandlers = (
     );
   }, [vrmRef, glbModelRef, glbSkinnedMeshesRef, retargetMixamoClipToCurrentModel, playClipOnCurrentModel]);
 
-  const playVrmRetargetedFbxFromUrl = useCallback((url: string, options?: ClipPlaybackOptions) => {
+  const playVrmRetargetedFbxFromUrl = useCallback((url: string, options?: ClipPlaybackOptions, layer: AnimationLayer = 'body') => {
     const vrm = vrmRef.current;
     if (!vrm?.humanoid) return false;
 
     console.log('[VrmViewer] Loading retargeted FBX:', url);
     loadMixamoAnimForVRM(url, vrm, options).then((clip) => {
       console.log('[VrmViewer] FBX loaded and retargeted:', url, 'duration:', clip.duration);
-      playClipOnCurrentModel(vrm.scene, null, clip, options);
+      playClipOnCurrentModel(vrm.scene, null, clip, options, layer);
     }).catch((err) => {
       console.error('[VrmViewer] Retargeted FBX failed:', err);
       toaster.create({
@@ -286,7 +287,7 @@ export const useVrmLoadHandlers = (
     return true;
   }, [vrmRef, playClipOnCurrentModel]);
 
-  const playRetargetedClipJsonFromUrl = useCallback(async (url: string, options?: ClipPlaybackOptions): Promise<boolean> => {
+  const playRetargetedClipJsonFromUrl = useCallback(async (url: string, options?: ClipPlaybackOptions, layer: AnimationLayer = 'body'): Promise<boolean> => {
     const vrm = vrmRef.current;
     if (!vrm?.scene) return false;
     try {
@@ -295,7 +296,7 @@ export const useVrmLoadHandlers = (
       const payload = await response.json();
       const clip = THREE.AnimationClip.parse(payload);
       if (!clip) return false;
-      playClipOnCurrentModel(vrm.scene, null, clip, options);
+      playClipOnCurrentModel(vrm.scene, null, clip, options, layer);
       return true;
     } catch (error) {
       console.warn('[VrmViewer] Failed to load retargeted clip json:', url, error);
@@ -326,7 +327,7 @@ export const useVrmLoadHandlers = (
     return new THREE.AnimationClip(clip.name, clip.duration, tracks);
   }, []);
 
-  const playVrmaFromUrl = useCallback(async (url: string, options?: ClipPlaybackOptions) => {
+  const playVrmaFromUrl = useCallback(async (url: string, options?: ClipPlaybackOptions, layer: AnimationLayer = 'body') => {
     const vrm = vrmRef.current;
     if (!vrm) throw new Error(`[VrmViewer] VRMA requested without loaded VRM: ${url}`);
 
@@ -349,7 +350,7 @@ export const useVrmLoadHandlers = (
         clip = makeVrmClipInPlace(clip);
       }
 
-      playClipOnCurrentModel(vrm.scene, null, clip, options);
+      playClipOnCurrentModel(vrm.scene, null, clip, options, layer);
     } catch (err) {
       console.error('[VrmViewer] Failed to load VRMA:', url, err);
       toaster.create({
@@ -451,14 +452,14 @@ export const useVrmLoadHandlers = (
     );
   }, [vrmRef, glbModelRef, glbBonesRef, initialBoneTransformsRef, setRigBones, setSelectedBone, setRigModelStamp, rebuildGlbBoneIndices, playClipOnCurrentModel]);
 
-  const playLoadedClipByName = useCallback((modelRoot: THREE.Object3D | null, name: string) => {
+  const playLoadedClipByName = useCallback((modelRoot: THREE.Object3D | null, name: string, layer: AnimationLayer = 'body') => {
     if (!modelRoot) return;
     const clip = loadedClipsRef.current.find((c) => c.name === name);
     if (!clip) return;
-    playClipOnCurrentModel(modelRoot, null, clip);
+    playClipOnCurrentModel(modelRoot, null, clip, {}, layer);
   }, [loadedClipsRef, playClipOnCurrentModel]);
 
-  const playRandomCharacterBlueAnimation = useCallback((scene: THREE.Scene | null, normalizedConfig: any, disposeObject: (obj: THREE.Object3D) => void) => {
+  const playRandomCharacterBlueAnimation = useCallback((scene: THREE.Scene | null, normalizedConfig: any, disposeObject: (obj: THREE.Object3D) => void, layer: AnimationLayer = 'body') => {
     if (CHARACTER_BLUE_ANIMATIONS.length === 0 || !scene || !normalizedConfig) return;
 
     const loader = new GLTFLoader();
@@ -490,7 +491,7 @@ export const useVrmLoadHandlers = (
         scene.add(model);
         glbModelRef.current = model;
 
-        playClipOnCurrentModel(model, null, clip);
+        playClipOnCurrentModel(model, null, clip, {}, layer);
       },
     );
   }, [glbModelRef, glbBonesRef, playClipOnCurrentModel]);

@@ -123,7 +123,6 @@ import { useNamiStudioObjectDragSnap } from './use-nami-studio-object-drag-snap'
 
 describe('useNamiStudioObjectDragSnap', () => {
   let localStorageData: Record<string, string> = {};
-  let customEvents: CustomEvent[] = [];
 
   const setupRefs = () => ({
     roomModelRef: { current: { getObjectByName: vi.fn(), children: [] as any[] } },
@@ -141,15 +140,13 @@ describe('useNamiStudioObjectDragSnap', () => {
     canvas.hasPointerCapture = vi.fn().mockReturnValue(true);
     mockRenderer = { domElement: canvas };
     localStorageData = {};
-    customEvents = [];
     vi.stubGlobal('localStorage', {
       getItem: (key: string) => localStorageData[key] ?? null,
       setItem: (key: string, value: string) => { localStorageData[key] = value; },
     });
-    vi.stubGlobal('dispatchEvent', (event: Event) => {
-      customEvents.push(event as CustomEvent);
-      return true;
-    });
+    
+    // Use spyOn to track events without breaking native dispatching
+    vi.spyOn(window, 'dispatchEvent');
     vi.clearAllMocks();
   });
 

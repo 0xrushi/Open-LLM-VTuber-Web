@@ -41,11 +41,20 @@ export const useVrmScene = () => {
       scene.background = null;
     }
 
+    const isSmallScreen = window.innerWidth < 768 || window.innerHeight < 600;
+
     const renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: !isSmallScreen,
       alpha: !backgroundColor && !hasEnvironmentScene,
+      powerPreference: 'high-performance',
     });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    
+    // Cap pixel ratio for better performance on small high-DPI screens
+    const pixelRatio = isSmallScreen 
+      ? Math.min(window.devicePixelRatio, 1.5) 
+      : window.devicePixelRatio;
+    renderer.setPixelRatio(pixelRatio);
+    
     renderer.setSize(container.clientWidth || 1, container.clientHeight || 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -100,6 +109,14 @@ export const useVrmScene = () => {
     return { scene, renderer, camera, controls };
   }, []);
 
+  const resize = useCallback((width: number, height: number) => {
+    if (rendererRef.current && cameraRef.current) {
+      cameraRef.current.aspect = width / height;
+      cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(width, height);
+    }
+  }, []);
+
   const cleanupScene = useCallback((container: HTMLDivElement | null) => {
     if (controlsRef.current) controlsRef.current.dispose();
     if (rendererRef.current) {
@@ -127,6 +144,7 @@ export const useVrmScene = () => {
     controlsRef,
     vrButtonRef,
     setupScene,
+    resize,
     cleanupScene,
   };
 };

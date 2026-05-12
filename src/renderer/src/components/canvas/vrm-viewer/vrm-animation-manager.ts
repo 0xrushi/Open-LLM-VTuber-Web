@@ -51,6 +51,8 @@ export class VrmAnimationManager {
   isSpeaking = false;
   isSpecialAction = false;
 
+  private proceduralDisabled = false;
+
   private readonly cfg = {
     headNod: 0.2,
     headTurn: 0.13,
@@ -285,6 +287,10 @@ export class VrmAnimationManager {
     this.eyeLookAtTarget.position.lerp(this.eyeTgtPos, 0.025);
   }
 
+  setProceduralDisabled(disabled: boolean) {
+    this.proceduralDisabled = disabled;
+  }
+
   update(dt: number) {
     if (!this.vrm) return;
 
@@ -327,7 +333,7 @@ export class VrmAnimationManager {
     }
     this.stateTimer += dt;
 
-    if (!this.isDancing && !this.isSleeping) {
+    if (!this.isDancing && !this.isSleeping && !this.proceduralDisabled) {
       const neck = this.vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Neck);
       if (neck) {
         if (!this.isMixamoPlaying) neck.quaternion.identity();
@@ -342,7 +348,7 @@ export class VrmAnimationManager {
       }
     }
 
-    if (this.isDancing || this.isSpecialAction || this.isSleeping) return;
+    if (this.isDancing || this.isSpecialAction || this.isSleeping || this.proceduralDisabled) return;
 
     this.bodyTimer += dt;
     if (this.bodyTimer > 2.8) { this.bodyTgt.x = this.rand(-0.05, 0.05); this.bodyTimer = 0; }

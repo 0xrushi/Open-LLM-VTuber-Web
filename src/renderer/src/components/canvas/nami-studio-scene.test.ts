@@ -6,6 +6,6 @@ describe('createNamiAuthoredEnvironmentRegistry', () => {
     const registry = createNamiAuthoredEnvironmentRegistry();
     const desk = registry.objects.find((object) => object.id === 'desk');
 
-    expect(desk?.interactionPoints.sit).toEqual([-3.288, 0.94, -2.482]);
+    expect(desk?.interactionPoints.sit).toEqual([-3.288, 0.907, -2.54]);
   });
 });

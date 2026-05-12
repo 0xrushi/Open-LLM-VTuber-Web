@@ -23,7 +23,8 @@ export const layoutStyles = {
   },
   sidebar: {
     position: 'relative' as const,
-    width: { base: '100%', md: '440px' },
+    width: { base: '100%', md: '440px', lg: '440px' },
+    maxWidth: { base: '100%', md: '40vw', lg: '440px' },
     height: { base: 'auto', md: '100%' },
     bg: 'gray.800',
     borderRight: '1px solid',
@@ -34,7 +35,8 @@ export const layoutStyles = {
   },
   mainContent: {
     flex: 1,
-    height: { base: 'calc(100% - 120px)', md: '100%' },
+    height: { base: 'auto', md: '100%' },
+    minHeight: { base: '400px', md: '100%' },
     position: 'relative',
     display: 'flex',
     flexDirection: 'column',

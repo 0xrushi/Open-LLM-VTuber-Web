@@ -62,6 +62,9 @@ export interface MessageEvent {
   files?: BackgroundFile[];
   actions?: Actions;
   text?: string;
+  action?: string;
+  objectId?: string;
+  sourceText?: string;
   model_info?: ModelInfo;
   conf_name?: string;
   conf_uid?: string;

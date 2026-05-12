@@ -37,7 +37,8 @@ export const sidebarStyles = {
       left: 0,
       top: 0,
       height: '100%',
-      width: '440px',
+      width: { base: '100%', md: '440px' },
+      maxWidth: { base: '100%', md: '40vw', lg: '440px' },
       bg: 'gray.900',
       transform: isCollapsed
         ? 'translateX(calc(-100% + 24px))'
@@ -48,6 +49,7 @@ export const sidebarStyles = {
       gap: 4,
       overflow: isCollapsed ? 'visible' : 'hidden',
       pb: '4',
+      zIndex: 10,
     }),
     toggleButton: {
       position: 'absolute',

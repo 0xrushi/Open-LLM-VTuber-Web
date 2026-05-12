@@ -3,10 +3,12 @@ import * as THREE from 'three';
 import { VRM } from '@pixiv/three-vrm';
 import { ClipPlaybackOptions } from '../types';
 import { VrmAnimationManager } from '../vrm-animation-manager';
+import { AnimationLayer } from '../action-graph';
 
 export const useVrmAnimation = () => {
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
-  const currentActionRef = useRef<THREE.AnimationAction | null>(null);
+  const activeActionsRef = useRef<Map<AnimationLayer, THREE.AnimationAction>>(new Map());
+  const activeActionIdsRef = useRef<Map<AnimationLayer, string>>(new Map());
   const loadedClipsRef = useRef<THREE.AnimationClip[]>([]);
   const [clipNames, setClipNames] = useState<string[]>([]);
   const [selectedClipName, setSelectedClipName] = useState<string>('');
@@ -36,7 +38,8 @@ export const useVrmAnimation = () => {
     modelRoot: THREE.Object3D | null,
     skinnedMesh: THREE.SkinnedMesh | null,
     clip: THREE.AnimationClip,
-    options?: ClipPlaybackOptions
+    options?: ClipPlaybackOptions,
+    layer: AnimationLayer = 'body'
   ) => {
     const mixerRoot: THREE.Object3D | null = modelRoot ?? skinnedMesh;
 
@@ -46,14 +49,23 @@ export const useVrmAnimation = () => {
     if (!mixerRef.current || mixerRef.current.getRoot() !== mixerRoot) {
       if (mixerRef.current) mixerRef.current.stopAllAction();
       mixerRef.current = new THREE.AnimationMixer(mixerRoot);
+      activeActionsRef.current.clear();
+      activeActionIdsRef.current.clear();
     }
     
     const mixer = mixerRef.current;
-    // Ensure only one primary clip drives the avatar at a time.
-    mixer.stopAllAction();
+    
+    // Stop existing action in the same layer
+    const existingAction = activeActionsRef.current.get(layer);
+    if (existingAction) {
+      existingAction.fadeOut(0.3);
+    }
+
     const action = mixer.clipAction(clip);
     configureActionPlayback(action, options);
-    action.reset().play();
+    
+    action.reset().fadeIn(0.3).play();
+    
     if (options?.holdFirstFrame) {
       action.time = 0;
       mixer.update(0);
@@ -62,13 +74,12 @@ export const useVrmAnimation = () => {
     
     if (options?.onSettled) {
       if (sleepPoseTimerRef.current) clearTimeout(sleepPoseTimerRef.current);
-      // holdFirstFrame applies the pose immediately via mixer.update(0); fire settled callback
-      // quickly so callers can correct world positions without waiting for the full clip duration.
       const delay = options.holdFirstFrame ? 50 : Math.max(200, clip.duration * 1000);
       sleepPoseTimerRef.current = setTimeout(options.onSettled, delay);
     }
     
-    currentActionRef.current = action;
+    activeActionsRef.current.set(layer, action);
+    activeActionIdsRef.current.set(layer, options?.actionId ?? 'unknown');
     setIsVrmaPlaying(true);
     isVrmaPlayingRef.current = true;
   }, [configureActionPlayback]);
@@ -78,20 +89,34 @@ export const useVrmAnimation = () => {
       mixerRef.current.stopAllAction();
       mixerRef.current = null;
     }
+    activeActionsRef.current.clear();
+    activeActionIdsRef.current.clear();
     if (sleepPoseTimerRef.current) {
       clearTimeout(sleepPoseTimerRef.current);
       sleepPoseTimerRef.current = null;
     }
     setIsVrmaPlaying(false);
     isVrmaPlayingRef.current = false;
-    currentActionRef.current = null;
     currentStateAnimUrlRef.current = '';
   }, []);
 
-  const pauseAllAnimations = useCallback(() => {
-    if (currentActionRef.current) {
-      currentActionRef.current.paused = true;
+  const stopLayerAnimation = useCallback((layer: AnimationLayer) => {
+    const action = activeActionsRef.current.get(layer);
+    if (action) {
+      action.fadeOut(0.3);
+      activeActionsRef.current.delete(layer);
+      activeActionIdsRef.current.delete(layer);
     }
+    if (activeActionsRef.current.size === 0) {
+      setIsVrmaPlaying(false);
+      isVrmaPlayingRef.current = false;
+    }
+  }, []);
+
+  const pauseAllAnimations = useCallback(() => {
+    activeActionsRef.current.forEach((action) => {
+      action.paused = true;
+    });
     if (sleepPoseTimerRef.current) {
       clearTimeout(sleepPoseTimerRef.current);
       sleepPoseTimerRef.current = null;
@@ -102,12 +127,14 @@ export const useVrmAnimation = () => {
   }, []);
 
   const resumePausedAnimation = useCallback(() => {
-    if (!currentActionRef.current) return false;
-    currentActionRef.current.paused = false;
-    currentActionRef.current.enabled = true;
-    if (!currentActionRef.current.isRunning()) {
-      currentActionRef.current.play();
-    }
+    if (activeActionsRef.current.size === 0) return false;
+    activeActionsRef.current.forEach((action) => {
+      action.paused = false;
+      action.enabled = true;
+      if (!action.isRunning()) {
+        action.play();
+      }
+    });
     setIsVrmaPlaying(true);
     isVrmaPlayingRef.current = true;
     return true;
@@ -115,7 +142,8 @@ export const useVrmAnimation = () => {
 
   return useMemo(() => ({
     mixerRef,
-    currentActionRef,
+    activeActionsRef,
+    activeActionIdsRef,
     loadedClipsRef,
     clipNames,
     setClipNames,
@@ -131,6 +159,7 @@ export const useVrmAnimation = () => {
     configureActionPlayback,
     playClipOnCurrentModel,
     stopAllAnimations,
+    stopLayerAnimation,
     pauseAllAnimations,
     resumePausedAnimation,
   }), [
@@ -140,6 +169,7 @@ export const useVrmAnimation = () => {
     configureActionPlayback,
     playClipOnCurrentModel,
     stopAllAnimations,
+    stopLayerAnimation,
     pauseAllAnimations,
     resumePausedAnimation
   ]);

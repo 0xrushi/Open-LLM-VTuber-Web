@@ -47,21 +47,14 @@ const createConfig = async (outDir: string) => ({
   publicDir: path.join(__dirname, "src/renderer/public"),
   base: "./",
   server: {
+    host: '0.0.0.0',
     port: 3000,
     proxy: {
-      '/models': {
-        target: 'http://127.0.0.1:12393',
+      '^/(client-ws|vrm|asr|tts-ws|proxy-ws|web-tool|live2d-models|bg|avatars|models|cache|configs)': {
+        target: 'http://localhost:12393',
         changeOrigin: true,
-      },
-      // Also proxy the video file cache if needed
-      '/cache': {
-        target: 'http://127.0.0.1:12393',
-        changeOrigin: true,
-      },
-      // Proxy websocket for standalone viewer if it uses relative path
-      '/ws': {
-        target: 'ws://127.0.0.1:12393',
         ws: true,
+        secure: false,
       }
     }
   },
