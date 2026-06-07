@@ -44,13 +44,19 @@ const createConfig = async (outDir: string) => ({
     },
   },
   root: path.join(__dirname, "src/renderer"),
+  // Keep env files at the repository root. Without this, Vite uses the
+  // renderer root and ignores /Users/bread/Documents/hermes-ui/.env.local.
+  envDir: __dirname,
   publicDir: path.join(__dirname, "src/renderer/public"),
   base: "./",
   server: {
     host: '0.0.0.0',
     port: 3000,
     proxy: {
-      '^/(client-ws|vrm|asr|tts-ws|proxy-ws|web-tool|live2d-models|bg|avatars|models|cache|configs)': {
+      // Static assets under /models, /bg, /avatars, and /live2d-models are served
+      // from src/renderer/public during Hermes UI dev. Proxying them to the
+      // VTuber backend hides local VRM/GLB/background/Live2D files.
+      '^/(client-ws|vrm|asr|tts-ws|proxy-ws|web-tool|cache|configs)': {
         target: 'http://localhost:12393',
         changeOrigin: true,
         ws: true,

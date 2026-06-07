@@ -5,7 +5,6 @@
 /* eslint-disable import/order */
 /* eslint-disable import/no-extraneous-dependencies */
 /* eslint-disable react/require-default-props */
-import React, { useEffect } from 'react';
 import { Box, Spinner, Flex, Text, Icon } from '@chakra-ui/react';
 import { sidebarStyles, chatPanelStyles } from './sidebar-styles';
 import { MainContainer, ChatContainer, MessageList as ChatMessageList, Message as ChatMessage, Avatar as ChatAvatar } from '@chatscope/chat-ui-kit-react';
@@ -35,7 +34,7 @@ function ChatHistoryPanel(): JSX.Element {
     <Box
       h="full"
       overflow="hidden"
-      bg="gray.900"
+      bg="var(--hermes-surface)"
     >
       <Global styles={chatPanelStyles} />
       <MainContainer>
@@ -47,8 +46,9 @@ function ChatHistoryPanel(): JSX.Element {
                 alignItems="center"
                 justifyContent="center"
                 height="100%"
-                color="whiteAlpha.500"
+                color="var(--hermes-text-muted)"
                 fontSize="sm"
+                fontFamily="var(--hermes-font-mono)"
               >
                 {t('sidebar.noMessages')}
               </Box>
@@ -56,6 +56,7 @@ function ChatHistoryPanel(): JSX.Element {
               validMessages.map((msg) => {
                 // Check if it's a tool call message
                 if (msg.type === 'tool_call_status') {
+                  const detailId = `tool-detail-${msg.id}`;
                   return (
                     // Render Tool Call Indicator using msg properties
                     <Flex
@@ -67,10 +68,33 @@ function ChatHistoryPanel(): JSX.Element {
                         as={FaTools}
                         {...sidebarStyles.toolCallIndicator.icon}
                       />
-                      <Text {...sidebarStyles.toolCallIndicator.text}>
-                        {/* {msg.tool_name}: {msg.status === 'running' ? 'Running...' : msg.content} */}
-                        {msg.status === "running" ? `${msg.name} is using tool ${msg.tool_name}` : `${msg.name} used tool ${msg.tool_name}`}
-                      </Text>
+                      <details style={{ width: '100%' }}>
+                        <summary
+                          style={{
+                            listStyle: 'none',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            color: 'var(--hermes-text-muted)',
+                            userSelect: 'none',
+                          }}
+                          aria-controls={detailId}
+                        >
+                          {msg.status === "running"
+                            ? `${msg.name || "AI"} is using tool ${msg.tool_name}`
+                            : `${msg.name || "AI"} used tool ${msg.tool_name}`}
+                        </summary>
+                        {msg.content && (
+                          <Text
+                            id={detailId}
+                            {...sidebarStyles.toolCallIndicator.text}
+                            mt={1}
+                            whiteSpace="pre-wrap"
+                            wordBreak="break-word"
+                          >
+                            {msg.content}
+                          </Text>
+                        )}
+                      </details>
                       {/* Show spinner if running, checkmark if completed, maybe error icon? */}
                       {msg.status === "running" && (
                         <Spinner
@@ -95,6 +119,41 @@ function ChatHistoryPanel(): JSX.Element {
                     </Flex>
                   );
                 } 
+                if (msg.type === 'internal_debug_trace') {
+                  return (
+                    <Flex
+                      key={msg.id}
+                      {...sidebarStyles.toolCallIndicator.container}
+                      alignItems="flex-start"
+                    >
+                      <Icon
+                        as={FaTools}
+                        {...sidebarStyles.toolCallIndicator.icon}
+                      />
+                      <details style={{ width: '100%' }}>
+                        <summary
+                          style={{
+                            listStyle: 'none',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            color: 'var(--hermes-text-muted)',
+                            userSelect: 'none',
+                          }}
+                        >
+                          {msg.title || 'Model internal tool/thinking trace'}
+                        </summary>
+                        <Text
+                          {...sidebarStyles.toolCallIndicator.text}
+                          mt={1}
+                          whiteSpace="pre-wrap"
+                          wordBreak="break-word"
+                        >
+                          {msg.content}
+                        </Text>
+                      </details>
+                    </Flex>
+                  );
+                }
                 // Render Standard Chat Message (human or ai text)
                 return (
                   <ChatMessage

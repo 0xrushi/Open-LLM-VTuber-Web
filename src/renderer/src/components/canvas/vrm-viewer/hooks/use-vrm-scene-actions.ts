@@ -58,7 +58,126 @@ export const useVrmSceneActions = (
   resetAllBones: () => void,
   playStateAnimFbx: (url: string) => void,
   startPoseIdle: (bones: LogicalBone[]) => void,
+  avatarCalibrationKey?: string,
 ) => {
+  const CALIBRATION_STORAGE_KEY = 'nami_pose_calibration_v1';
+  const SLEEP_YAW_ALIGNMENT_OFFSET = -Math.PI / 2;
+
+  type SitCalibration = {
+    xOffset?: number;
+    zOffset?: number;
+    pelvisYOffset?: number;
+  };
+
+  type SleepCalibration = {
+    xOffset?: number;
+    zOffset?: number;
+    surfaceYOffset?: number;
+    hipsAboveSurfaceOffset?: number;
+    yawOffset?: number;
+    rootYOffset?: number;
+  };
+
+  type ObjectCalibration = {
+    sit?: SitCalibration;
+    sleep?: SleepCalibration;
+  };
+
+  type CalibrationProfile = {
+    sceneId: string;
+    avatarKey: string;
+    objects: Record<string, ObjectCalibration>;
+  };
+
+  type CalibrationStore = {
+    version: 1;
+    profiles: Record<string, CalibrationProfile>;
+  };
+
+  type CalibratableObject = {
+    id: string;
+    humanName: string;
+    hasSit: boolean;
+    hasSleep: boolean;
+  };
+
+  const getSceneId = useCallback(() => {
+    const registry = (window as any).__AI_SCENE_REGISTRY__ as AiSceneRegistry | undefined;
+    return registry?.sceneId ?? 'default_scene';
+  }, []);
+
+  const getAvatarKey = useCallback(() => {
+    const key = (avatarCalibrationKey ?? '').trim();
+    if (key) return key;
+    return vrmRef.current?.meta?.name ?? 'default_avatar';
+  }, [avatarCalibrationKey, vrmRef]);
+
+  const getProfileStorageKey = useCallback(() => (
+    `${getSceneId()}::${getAvatarKey()}`
+  ), [getSceneId, getAvatarKey]);
+
+  const loadCalibrationStore = useCallback((): CalibrationStore => {
+    try {
+      const raw = localStorage.getItem(CALIBRATION_STORAGE_KEY);
+      if (!raw) return { version: 1, profiles: {} };
+      const parsed = JSON.parse(raw) as CalibrationStore;
+      if (!parsed || typeof parsed !== 'object' || !parsed.profiles) {
+        return { version: 1, profiles: {} };
+      }
+      return parsed;
+    } catch {
+      return { version: 1, profiles: {} };
+    }
+  }, []);
+
+  const saveCalibrationStore = useCallback((store: CalibrationStore) => {
+    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(store));
+  }, []);
+
+  const getCurrentProfile = useCallback((): CalibrationProfile => {
+    const store = loadCalibrationStore();
+    const key = getProfileStorageKey();
+    return store.profiles[key] ?? {
+      sceneId: getSceneId(),
+      avatarKey: getAvatarKey(),
+      objects: {},
+    };
+  }, [loadCalibrationStore, getProfileStorageKey, getSceneId, getAvatarKey]);
+
+  const setObjectCalibration = useCallback((objectId: string, calibration: ObjectCalibration) => {
+    const store = loadCalibrationStore();
+    const key = getProfileStorageKey();
+    const current = store.profiles[key] ?? {
+      sceneId: getSceneId(),
+      avatarKey: getAvatarKey(),
+      objects: {},
+    };
+    current.objects[objectId] = {
+      ...(current.objects[objectId] ?? {}),
+      ...calibration,
+    };
+    store.profiles[key] = current;
+    saveCalibrationStore(store);
+  }, [loadCalibrationStore, saveCalibrationStore, getProfileStorageKey, getSceneId, getAvatarKey]);
+
+  const getObjectCalibration = useCallback((objectId: string): ObjectCalibration | null => {
+    const profile = getCurrentProfile();
+    return profile.objects[objectId] ?? null;
+  }, [getCurrentProfile]);
+
+  const listCalibratableObjects = useCallback((): CalibratableObject[] => {
+    const registry = (window as any).__AI_SCENE_REGISTRY__ as AiSceneRegistry | undefined;
+    if (!registry?.objects) return [];
+    return registry.objects
+      .filter((entry) => Boolean(entry.interactionPoints.sit || entry.interactionPoints.sleep))
+      .map((entry) => ({
+        id: entry.id,
+        humanName: entry.humanName,
+        hasSit: Boolean(entry.interactionPoints.sit),
+        hasSleep: Boolean(entry.interactionPoints.sleep),
+      }));
+  }, []);
+
   const ACTION_CATEGORY_ALIASES: Record<string, string> = {
     sit_animation: 'sit',
     sitting: 'sit',
@@ -94,6 +213,117 @@ export const useVrmSceneActions = (
     }
     return object;
   }, [roomModelRef, sceneRef, sceneObjectBaseTransformRef]);
+
+  const saveSitCalibration = useCallback((objectId: string, calibration: SitCalibration) => {
+    const entry = getAiSceneObject(objectId);
+    setObjectCalibration(objectId, { sit: calibration });
+    toaster.create({
+      title: 'Calibration saved',
+      description: `Sit calibration saved for ${entry?.humanName ?? objectId}.`,
+      type: 'success',
+      duration: 2000,
+    });
+  }, [getAiSceneObject, setObjectCalibration]);
+
+  const saveSleepCalibration = useCallback((objectId: string, calibration: SleepCalibration) => {
+    const entry = getAiSceneObject(objectId);
+    setObjectCalibration(objectId, { sleep: calibration });
+    toaster.create({
+      title: 'Calibration saved',
+      description: `Sleep calibration saved for ${entry?.humanName ?? objectId}.`,
+      type: 'success',
+      duration: 2000,
+    });
+  }, [getAiSceneObject, setObjectCalibration]);
+
+  const captureSitCalibrationFromCurrentPose = useCallback(() => {
+    const seated = seatedContactRef.current;
+    const root = getCurrentModelRoot();
+    if (!seated || !root) {
+      toaster.create({
+        title: 'No active sit pose',
+        description: 'Run a sit action first, then capture calibration.',
+        type: 'error',
+        duration: 2200,
+      });
+      return false;
+    }
+    const entry = getAiSceneObject(seated.objectId);
+    const baseSit = entry?.interactionPoints?.sit;
+    if (!entry || !baseSit) {
+      toaster.create({
+        title: 'Sit target unavailable',
+        description: 'Could not find sit target calibration point.',
+        type: 'error',
+        duration: 2200,
+      });
+      return false;
+    }
+    const calibration: SitCalibration = {
+      xOffset: Number((root.position.x - baseSit[0]).toFixed(3)),
+      zOffset: Number((root.position.z - baseSit[2]).toFixed(3)),
+      pelvisYOffset: Number((seated.targetPelvisY - baseSit[1]).toFixed(3)),
+    };
+    saveSitCalibration(seated.objectId, calibration);
+    return true;
+  }, [seatedContactRef, getCurrentModelRoot, getAiSceneObject, saveSitCalibration]);
+
+  const captureSleepCalibrationFromCurrentPose = useCallback(() => {
+    const sleeping = sleepTargetRef.current;
+    const root = getCurrentModelRoot();
+    if (!sleeping || !root) {
+      toaster.create({
+        title: 'No active sleep pose',
+        description: 'Run a sleep action first, then capture calibration.',
+        type: 'error',
+        duration: 2200,
+      });
+      return false;
+    }
+    const entry = getAiSceneObject(sleeping.objectId);
+    const baseSleep = entry?.interactionPoints?.sleep ?? entry?.interactionPoints?.sit;
+    if (!entry || !baseSleep) {
+      toaster.create({
+        title: 'Sleep target unavailable',
+        description: 'Could not find sleep target calibration point.',
+        type: 'error',
+        duration: 2200,
+      });
+      return false;
+    }
+    const defaultYaw = (vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0)
+      + entry.rotation[1]
+      + SLEEP_YAW_ALIGNMENT_OFFSET;
+    const calibration: SleepCalibration = {
+      xOffset: Number((sleeping.rootX - baseSleep[0]).toFixed(3)),
+      zOffset: Number((sleeping.rootZ - baseSleep[2]).toFixed(3)),
+      surfaceYOffset: Number((sleeping.surfaceY - baseSleep[1]).toFixed(3)),
+      rootYOffset: Number((sleeping.rootY - sleeping.surfaceY).toFixed(3)),
+      yawOffset: Number((sleeping.rootYaw - defaultYaw).toFixed(3)),
+    };
+    saveSleepCalibration(sleeping.objectId, calibration);
+    return true;
+  }, [sleepTargetRef, getCurrentModelRoot, getAiSceneObject, vrmRef, saveSleepCalibration]);
+
+  const exportCurrentCalibrationProfile = useCallback(async () => {
+    const profile = getCurrentProfile();
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(profile, null, 2));
+      toaster.create({
+        title: 'Calibration exported',
+        description: 'Copied current scene/avatar calibration JSON.',
+        type: 'success',
+        duration: 2200,
+      });
+    } catch {
+      toaster.create({
+        title: 'Export failed',
+        description: 'Could not copy calibration JSON to clipboard.',
+        type: 'error',
+        duration: 2200,
+      });
+    }
+  }, [getCurrentProfile]);
 
   const focusCameraOnSceneObject = useCallback((entry: SceneObjectRegistryEntry) => {
     const controls = controlsRef.current;
@@ -138,19 +368,24 @@ export const useVrmSceneActions = (
       return;
     }
 
-    console.log('[VrmViewer] Sitting point found:', sitPoint);
+    const sitCalibration = getObjectCalibration(objectId)?.sit;
+    const adjustedSitPoint: [number, number, number] = [
+      sitPoint[0] + (sitCalibration?.xOffset ?? 0),
+      sitPoint[1] + (sitCalibration?.pelvisYOffset ?? 0),
+      sitPoint[2] + (sitCalibration?.zOffset ?? 0),
+    ];
+
+    console.log('[VrmViewer] Sitting point found:', adjustedSitPoint);
     const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
     const [fx, , fz] = target.facingDirection;
     const facingYaw = Math.atan2(fx, fz);
     const seatedYaw = baseRotY + facingYaw;
     const rootStart = root.position.clone();
     const startYaw = root.rotation.y;
-    const shouldBlendIntoSeat = rootStart.distanceTo(new THREE.Vector3(sitPoint[0], rootStart.y, sitPoint[2])) < 1.25;
+    const shouldBlendIntoSeat = rootStart.distanceTo(new THREE.Vector3(adjustedSitPoint[0], rootStart.y, adjustedSitPoint[2])) < 1.25;
     if (!shouldBlendIntoSeat) {
-      root.position.set(sitPoint[0], 0, sitPoint[2]);
+      root.position.set(adjustedSitPoint[0], rootStart.y, adjustedSitPoint[2]);
       root.rotation.y = seatedYaw;
-    } else {
-      root.position.y = 0;
     }
     root.updateMatrixWorld(true);
     if (modelBasePositionRef.current) {
@@ -167,13 +402,13 @@ export const useVrmSceneActions = (
     disposeSeatedRapier();
     seatedContactRef.current = {
       objectId,
-      targetPelvisY: sitPoint[1],
-      standPosition: target.interactionPoints.approach ?? [sitPoint[0], 0, sitPoint[2] + 0.7],
-      rootStartX: shouldBlendIntoSeat ? rootStart.x : sitPoint[0],
-      rootStartZ: shouldBlendIntoSeat ? rootStart.z : sitPoint[2],
+      targetPelvisY: adjustedSitPoint[1],
+      standPosition: target.interactionPoints.approach ?? [adjustedSitPoint[0], 0, adjustedSitPoint[2] + 0.7],
+      rootStartX: shouldBlendIntoSeat ? rootStart.x : adjustedSitPoint[0],
+      rootStartZ: shouldBlendIntoSeat ? rootStart.z : adjustedSitPoint[2],
       rootStartYaw: shouldBlendIntoSeat ? startYaw : seatedYaw,
-      rootX: sitPoint[0],
-      rootZ: sitPoint[2],
+      rootX: adjustedSitPoint[0],
+      rootZ: adjustedSitPoint[2],
       rootYaw: seatedYaw,
       settleStartTime: performance.now() / 1000,
       settleDuration: shouldBlendIntoSeat ? 0.75 : 0.2,
@@ -182,7 +417,7 @@ export const useVrmSceneActions = (
     ensureRapierReady().then(() => {
       if (seatedContactRef.current?.objectId !== objectId) return;
       console.log('[VrmViewer] Creating Rapier harness for sitting');
-      createSeatedRapierHarness(sitPoint);
+      createSeatedRapierHarness(adjustedSitPoint);
     });
 
     const startSeatedIdle = () => {
@@ -222,7 +457,7 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, modelBasePositionRef, stopPoseIdle, stopProcedural, isSleepingRef, disposeSeatedRapier, seatedContactRef, ensureRapierReady, createSeatedRapierHarness, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, playVrmaFromUrl, startPoseIdle, danceAudioRef]);
+  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, modelBasePositionRef, stopPoseIdle, stopProcedural, isSleepingRef, disposeSeatedRapier, seatedContactRef, ensureRapierReady, createSeatedRapierHarness, playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, playVrmaFromUrl, startPoseIdle, danceAudioRef, getObjectCalibration]);
 
   const sleepOnSceneObject = useCallback((objectId: string) => {
     const target = getAiSceneObject(objectId);
@@ -250,28 +485,35 @@ export const useVrmSceneActions = (
       danceAudioRef.current.currentTime = 0;
     }
 
+    const sleepCalibration = getObjectCalibration(objectId)?.sleep;
+    const adjustedSleepPoint: [number, number, number] = [
+      sleepPoint[0] + (sleepCalibration?.xOffset ?? 0),
+      sleepPoint[1] + (sleepCalibration?.surfaceYOffset ?? 0),
+      sleepPoint[2] + (sleepCalibration?.zOffset ?? 0),
+    ];
     const baseRotY = vrmRef.current?.meta?.metaVersion === '0' ? Math.PI : 0;
-    const SLEEP_YAW_ALIGNMENT_OFFSET = -Math.PI / 2;
-    const sleepYaw = baseRotY + target.rotation[1] + SLEEP_YAW_ALIGNMENT_OFFSET;
+    const sleepYaw = baseRotY + target.rotation[1] + SLEEP_YAW_ALIGNMENT_OFFSET + (sleepCalibration?.yawOffset ?? 0);
 
-    const SLEEP_ROOT_TO_SURFACE_OFFSET = 1.05;
-    const sleepRootY = sleepPoint[1] + SLEEP_ROOT_TO_SURFACE_OFFSET;
-    root.position.set(sleepPoint[0], sleepRootY, sleepPoint[2]);
+    // Start at surface level and let hips alignment settle refine exact root Y.
+    const SLEEP_ROOT_TO_SURFACE_OFFSET = sleepCalibration?.rootYOffset ?? 0;
+    const sleepRootY = adjustedSleepPoint[1] + SLEEP_ROOT_TO_SURFACE_OFFSET;
+    root.position.set(adjustedSleepPoint[0], sleepRootY, adjustedSleepPoint[2]);
     root.rotation.y = sleepYaw;
     root.updateMatrixWorld(true);
     modelBasePositionRef.current = root.position.clone();
 
     sleepTargetRef.current = {
       objectId,
-      rootX: sleepPoint[0],
+      rootX: adjustedSleepPoint[0],
       rootY: sleepRootY,
-      rootZ: sleepPoint[2],
+      rootZ: adjustedSleepPoint[2],
       rootYaw: sleepYaw,
-      surfaceY: sleepPoint[1],
-      standPosition: target.interactionPoints.approach ?? [sleepPoint[0], 0, sleepPoint[2] + 0.7],
+      surfaceY: adjustedSleepPoint[1],
+      hipsAboveSurfaceOffset: sleepCalibration?.hipsAboveSurfaceOffset ?? 0.1,
+      standPosition: target.interactionPoints.approach ?? [adjustedSleepPoint[0], 0, adjustedSleepPoint[2] + 0.7],
     };
 
-    const SLEEP_HIPS_ABOVE_SURFACE = 0.1;
+    const SLEEP_HIPS_ABOVE_SURFACE = sleepCalibration?.hipsAboveSurfaceOffset ?? 0.1;
     const sleepingPlayback: ClipPlaybackOptions = {
       loopOnce: true,
       clampWhenFinished: true,
@@ -293,7 +535,7 @@ export const useVrmSceneActions = (
           pinnedRoot.updateMatrixWorld(true);
           const hipsWorld = new THREE.Vector3();
           hipsNode.getWorldPosition(hipsWorld);
-          const adjust = (sleepPoint[1] + SLEEP_HIPS_ABOVE_SURFACE) - hipsWorld.y;
+          const adjust = (adjustedSleepPoint[1] + SLEEP_HIPS_ABOVE_SURFACE) - hipsWorld.y;
           pinnedRoot.position.y += adjust;
           pinnedRoot.updateMatrixWorld(true);
           sleepTarget.rootY = pinnedRoot.position.y;
@@ -321,11 +563,19 @@ export const useVrmSceneActions = (
       type: 'success',
       duration: 1800,
     });
-  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, modelBasePositionRef, playVrmaFromUrl, danceAudioRef]);
+  }, [getAiSceneObject, getCurrentModelRoot, vrmRef, stopPoseIdle, stopProcedural, disposeSeatedRapier, seatedContactRef, sleepTargetRef, isSleepingRef, modelBasePositionRef, playVrmaFromUrl, danceAudioRef, getObjectCalibration]);
 
   const startWalkingToSceneObject = useCallback((entry: SceneObjectRegistryEntry, onArrive?: () => boolean | void) => {
     const root = getCurrentModelRoot();
     if (!root) return false;
+    const currentSeated = seatedContactRef.current;
+    const currentSleep = sleepTargetRef.current;
+    const standPosition = currentSeated?.standPosition ?? currentSleep?.standPosition ?? null;
+    if (standPosition) {
+      root.position.set(standPosition[0], standPosition[1], standPosition[2]);
+      root.updateMatrixWorld(true);
+      if (modelBasePositionRef.current) modelBasePositionRef.current.copy(root.position);
+    }
 
     const point = entry.interactionPoints.approach ?? entry.position;
     const lookAt = entry.interactionPoints.lookAt ?? entry.position;
@@ -733,5 +983,14 @@ export const useVrmSceneActions = (
     playKiss,
     animateSceneObjectOpenState,
     executeSceneObjectAction,
+    listCalibratableObjects,
+    getObjectCalibration,
+    saveSitCalibration,
+    saveSleepCalibration,
+    captureSitCalibrationFromCurrentPose,
+    captureSleepCalibrationFromCurrentPose,
+    exportCurrentCalibrationProfile,
+    getActiveSitObjectId: () => seatedContactRef.current?.objectId ?? null,
+    getActiveSleepObjectId: () => sleepTargetRef.current?.objectId ?? null,
   };
 };

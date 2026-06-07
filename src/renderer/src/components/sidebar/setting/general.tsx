@@ -6,6 +6,7 @@ import { settingStyles } from "./setting-styles";
 import { useConfig } from "@/context/character-config-context";
 import { useGeneralSettings } from "@/hooks/sidebar/setting/use-general-settings";
 import { useWebSocket } from "@/context/websocket-context";
+import { useLive2DConfig } from "@/context/live2d-config-context";
 import { SelectField, SwitchField, InputField } from "./common";
 
 interface GeneralProps {
@@ -27,9 +28,9 @@ const useCollections = () => {
 
   const backgrounds = createListCollection({
     items:
-      backgroundFiles?.map((filename) => ({
-        label: String(filename),
-        value: `/bg/${filename}`,
+      backgroundFiles?.map((file) => ({
+        label: file.name,
+        value: file.url,
       })) || [],
   });
 
@@ -52,7 +53,10 @@ function General({ onSave, onCancel }: GeneralProps): JSX.Element {
   const bgUrlContext = useBgUrl();
   const { confName, setConfName } = useConfig();
   const { wsUrl, setWsUrl, baseUrl, setBaseUrl } = useWebSocket();
+  const { modelInfo } = useLive2DConfig();
   const collections = useCollections();
+  const isVrmModel = modelInfo?.renderer === "vrm"
+    || /\.(vrm|glb|gltf)(\?|#|$)/i.test(modelInfo?.url ?? "");
 
   const {
     settings,
@@ -106,14 +110,16 @@ function General({ onSave, onCancel }: GeneralProps): JSX.Element {
             value={settings.selectedBgUrl}
             onChange={(value) => handleSettingChange("selectedBgUrl", value)}
             collection={collections.backgrounds}
-            placeholder={t("settings.general.backgroundImage")}
+            placeholder={isVrmModel ? "Disabled for VRM scene characters" : t("settings.general.backgroundImage")}
+            disabled={isVrmModel}
           />
 
           <InputField
             label={t("settings.general.customBgUrl")}
             value={settings.customBgUrl}
             onChange={(value) => handleSettingChange("customBgUrl", value)}
-            placeholder={t("settings.general.customBgUrlPlaceholder")}
+            placeholder={isVrmModel ? "VRM characters use their scene instead" : t("settings.general.customBgUrlPlaceholder")}
+            disabled={isVrmModel}
           />
         </>
       )}

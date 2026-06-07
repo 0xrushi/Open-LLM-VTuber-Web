@@ -12,6 +12,7 @@ import { toaster } from '@/components/ui/toaster';
 
 import { VrmAnimationManager } from './vrm-viewer/vrm-animation-manager';
 import { UiOverlay } from './vrm-viewer/components/ui-overlay';
+import { PoseCalibrationFloat } from './vrm-viewer/components/pose-calibration-float';
 import {
   useVrmScene,
   useVrmModel,
@@ -247,7 +248,7 @@ export const VrmViewer = memo(({ showControls = true }: VrmViewerProps) => {
     danceAudioRef, kissAudioRef, sceneObjectBaseTransformRef, lanternLitRef, stopPoseIdle, stopProcedural, stopAllAnimations,
     disposeSeatedRapier, ensureRapierReady, createSeatedRapierHarness,
     playVrmRetargetedFbxFromUrl, playMixamoFbxFromUrl, playVrmaFromUrl, resetAllBones,
-    playStateAnimFbx, startPoseIdleInternal
+    playStateAnimFbx, startPoseIdleInternal, normalizedConfig?.url
   );
 
   const { activateObjectDragSnap, refreshSnappableObjects } = useNamiStudioObjectDragSnap({
@@ -517,6 +518,23 @@ export const VrmViewer = memo(({ showControls = true }: VrmViewerProps) => {
           root.position.z = sleepTarget.rootZ;
           root.rotation.set(0, sleepTarget.rootYaw, 0);
           root.updateMatrixWorld(true);
+
+          // Continuously enforce hips height so sleep calibration stays effective even if
+          // animation settle callbacks fire late or clip offsets vary across avatars.
+          const vrm = vrmRef.current;
+          const hipsNode = vrm?.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Hips);
+          if (vrm && hipsNode) {
+            const hipsWorld = new THREE.Vector3();
+            hipsNode.getWorldPosition(hipsWorld);
+            const desiredHipsY = sleepTarget.surfaceY + sleepTarget.hipsAboveSurfaceOffset;
+            const deltaY = THREE.MathUtils.clamp(desiredHipsY - hipsWorld.y, -0.03, 0.03);
+            if (Math.abs(deltaY) > 0.0005) {
+              root.position.y += deltaY;
+              sleepTarget.rootY = root.position.y;
+              root.updateMatrixWorld(true);
+            }
+          }
+
           if (modelBasePositionRef.current) modelBasePositionRef.current.copy(root.position);
         }
       }
@@ -973,6 +991,21 @@ export const VrmViewer = memo(({ showControls = true }: VrmViewerProps) => {
           onApplyRig={handleApplyRigToBone}
         />
       )}
+      <PoseCalibrationFloat
+        calibrationObjects={sceneActions.listCalibratableObjects()}
+        getObjectCalibration={sceneActions.getObjectCalibration}
+        onSaveSitCalibration={sceneActions.saveSitCalibration}
+        onSaveSleepCalibration={sceneActions.saveSleepCalibration}
+        onCaptureCurrentSitCalibration={sceneActions.captureSitCalibrationFromCurrentPose}
+        onCaptureCurrentSleepCalibration={sceneActions.captureSleepCalibrationFromCurrentPose}
+        onExportCalibration={() => {
+          void sceneActions.exportCurrentCalibrationProfile();
+        }}
+        onReapplySit={sceneActions.sitOnSceneObject}
+        onReapplySleep={sceneActions.sleepOnSceneObject}
+        getActiveSitObjectId={sceneActions.getActiveSitObjectId}
+        getActiveSleepObjectId={sceneActions.getActiveSleepObjectId}
+      />
     </div>
   );
 });

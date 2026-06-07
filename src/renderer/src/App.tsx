@@ -15,7 +15,9 @@ import { CameraProvider } from "./context/camera-context";
 import { ChatHistoryProvider } from "./context/chat-history-context";
 import { CharacterConfigProvider } from "./context/character-config-context";
 import { Toaster } from "./components/ui/toaster";
+import { ColorModeProvider } from "./components/ui/color-mode";
 import { VADProvider } from "./context/vad-context";
+import { WakeWordProvider } from "./context/wake-word-context";
 import { Live2D } from "./components/canvas/live2d";
 import { VrmViewer } from "./components/canvas/vrm-viewer";
 import { MediaPipeController } from "./components/canvas/mediapipe-controller";
@@ -30,6 +32,7 @@ import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
 import { FiMenu } from "react-icons/fi";
 import Background from "./components/canvas/background";
 import WebSocketStatus from "./components/canvas/ws-status";
+import HermesContextBar from "./components/canvas/hermes-context-bar";
 import Subtitle from "./components/canvas/subtitle";
 import { ModeProvider, useMode } from "./context/mode-context";
 import ErrorBoundary from "./components/ui/error-boundary";
@@ -131,7 +134,7 @@ function AppContent(): JSX.Element {
           <>
             <VrmViewer showControls={showFloatingControls} />
             {isVrmAvatarFile ? (
-              <MediaPipeController showControls={showFloatingControls} />
+              <MediaPipeController showControls={false} />
             ) : null}
           </>
         ) : (
@@ -192,6 +195,18 @@ function AppContent(): JSX.Element {
                   <WebSocketStatus />
                 </Box>
               )}
+              {showFloatingControls && (
+                <Box
+                  position="absolute"
+                  top={isElectron ? "48px" : "20px"}
+                  left="50%"
+                  transform="translateX(-50%)"
+                  zIndex={10}
+                  display={{ base: showSidebar && isSmallScreen ? "none" : "block", md: "block" }}
+                >
+                  <HermesContextBar />
+                </Box>
+              )}
               <Box
                 position="absolute"
                 bottom={isFooterCollapsed ? "39px" : "135px"}
@@ -233,10 +248,12 @@ function AppContent(): JSX.Element {
 function App(): JSX.Element {
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* ModeProvider needs to wrap AppContent to provide mode to getGlobalStyles */}
-      <ModeProvider>
-        <AppWithGlobalStyles />
-      </ModeProvider>
+      <ColorModeProvider attribute="class" defaultTheme="system" enableSystem>
+        {/* ModeProvider needs to wrap AppContent to provide mode to getGlobalStyles */}
+        <ModeProvider>
+          <AppWithGlobalStyles />
+        </ModeProvider>
+      </ColorModeProvider>
     </ChakraProvider>
   );
 }
@@ -254,18 +271,20 @@ function AppWithGlobalStyles(): JSX.Element {
                   <Live2DConfigProvider>
                     <SubtitleProvider>
                       <VADProvider>
-                        <BgUrlProvider>
-                          <GroupProvider>
-                            <BrowserProvider>
-                              <WebSocketHandler>
-                                <Toaster />
-                                <ErrorBoundary>
-                                  <AppContent />
-                                </ErrorBoundary>
-                              </WebSocketHandler>
-                            </BrowserProvider>
-                          </GroupProvider>
-                        </BgUrlProvider>
+                        <WakeWordProvider>
+                          <BgUrlProvider>
+                            <GroupProvider>
+                              <BrowserProvider>
+                                <WebSocketHandler>
+                                  <Toaster />
+                                  <ErrorBoundary>
+                                    <AppContent />
+                                  </ErrorBoundary>
+                                </WebSocketHandler>
+                              </BrowserProvider>
+                            </GroupProvider>
+                          </BgUrlProvider>
+                        </WakeWordProvider>
                       </VADProvider>
                     </SubtitleProvider>
                   </Live2DConfigProvider>

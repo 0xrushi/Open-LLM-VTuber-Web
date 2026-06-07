@@ -65,15 +65,6 @@ export interface BlueprintSceneAsset {
 
 type AuthoredEnvironmentObject = typeof namiAuthoredEnvironmentConfig.objects[number];
 
-const namiDeskSitCalibration = {
-  rootPosition: [-3.288, 0.42737534252080384, -2.54] as SceneVec3,
-  hipsPosition: [0.17, 0.48, -0.54] as SceneVec3,
-};
-
-const namiDeskSitPelvisY = Number((
-  namiDeskSitCalibration.rootPosition[1] + namiDeskSitCalibration.hipsPosition[1]
-).toFixed(3));
-
 const authoredVisualOverrides: Record<string, Partial<SceneObjectRegistryEntry>> = {
   treadmill: {
     position: [1.749, 0, 2.123],
@@ -152,10 +143,14 @@ const createAuthoredEntry = (object: AuthoredEnvironmentObject): SceneObjectRegi
     ];
   }
   if (type === 'desk') {
+    // Desk sitting is anchored to the chair-side offset, not desk center.
+    // Values are relative to authored desk transforms to avoid clipping into tabletop.
+    const DESK_SIT_PELVIS_Y_OFFSET = 0.852;
+    const DESK_SIT_Z_OFFSET = -0.638;
     interactionPoints.sit = [
-      namiDeskSitCalibration.rootPosition[0],
-      namiDeskSitPelvisY,
-      namiDeskSitCalibration.rootPosition[2],
+      Number(position[0].toFixed(3)),
+      Number((position[1] + DESK_SIT_PELVIS_Y_OFFSET).toFixed(3)),
+      Number((position[2] + DESK_SIT_Z_OFFSET).toFixed(3)),
     ];
     interactionPoints.approach = [
       Number(position[0].toFixed(3)),

@@ -48,19 +48,22 @@ export const UiOverlay: React.FC<UiOverlayProps> = (props) => {
       position: 'absolute',
       top: '16px',
       right: '16px',
-      backgroundColor: 'rgba(0,0,0,0.7)',
+      background: 'linear-gradient(180deg, rgba(5, 14, 18, 0.86), rgba(7, 22, 25, 0.76))',
       padding: '12px',
-      borderRadius: '8px',
-      color: 'white',
+      borderRadius: '6px',
+      color: '#d8ffe9',
       zIndex: 100,
       display: 'flex',
       flexDirection: 'column',
       gap: '8px',
-      fontFamily: 'sans-serif',
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
       fontSize: '12px',
       maxWidth: '280px',
       maxHeight: '80vh',
-      overflow: 'auto'
+      overflow: 'auto',
+      border: '1px solid rgba(95, 243, 181, 0.38)',
+      boxShadow: '0 0 0 1px rgba(0,0,0,0.65), 0 18px 52px rgba(0,0,0,0.42), 0 0 28px rgba(95,243,181,0.11), inset 0 1px 0 rgba(255,255,255,0.07)',
+      backdropFilter: 'blur(12px) saturate(130%)'
     }}>
       <PoseCorrectionPanel
         invertLegs={props.invertLegs}

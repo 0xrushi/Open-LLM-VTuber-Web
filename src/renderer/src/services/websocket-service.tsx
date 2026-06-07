@@ -21,10 +21,31 @@ interface BackgroundFile {
 export interface AudioPayload {
   type: 'audio';
   audio?: string;
+  audio_mime?: string;
   volumes?: number[];
   slice_length?: number;
   display_text?: DisplayText;
   actions?: Actions;
+}
+
+export interface HermesRuntimeStatus {
+  model?: string;
+  model_short?: string;
+  provider?: string;
+  session_id?: string;
+  hermes_session_id?: string;
+  context_tokens?: number;
+  context_length?: number | null;
+  context_percent?: number | null;
+  compressions?: number;
+  active_background_tasks?: number;
+  active_background_processes?: number;
+  session_total_tokens?: number;
+  state?: 'idle' | 'running' | string;
+  prompt_started_at?: number | null;
+  prompt_elapsed_ms?: number;
+  updated_at?: string;
+  timestamp?: number;
 }
 
 export interface Message {
@@ -36,10 +57,11 @@ export interface Message {
   avatar?: string;
 
   // Fields for different message types (make optional)
-  type?: 'text' | 'tool_call_status'; // Add possible types, default to 'text' if omitted
+  type?: 'text' | 'tool_call_status' | 'internal_debug_trace'; // Add possible types, default to 'text' if omitted
   tool_id?: string; // Specific to tool calls
   tool_name?: string; // Specific to tool calls
   status?: 'running' | 'completed' | 'error'; // Specific to tool calls
+  title?: string; // Specific to debug traces
 }
 
 export interface Actions {
@@ -57,6 +79,7 @@ export interface MessageEvent {
   timestamp: string;
   type: string;
   audio?: string;
+  audio_mime?: string;
   volumes?: number[];
   slice_length?: number;
   files?: BackgroundFile[];
@@ -98,6 +121,12 @@ export interface MessageEvent {
     wsUrl: string;
     sessionId?: string;
   };
+  title?: string;
+  session_id?: string;
+  run_id?: string;
+  hermes_session_id?: string;
+  runtime?: HermesRuntimeStatus;
+  source?: 'text' | 'voice';
 }
 
 // Get translation function for error messages

@@ -59,6 +59,7 @@ export interface SleepPoseTarget {
   rootZ: number;
   rootYaw: number;
   surfaceY: number;
+  hipsAboveSurfaceOffset: number;
   standPosition: [number, number, number];
 }
 

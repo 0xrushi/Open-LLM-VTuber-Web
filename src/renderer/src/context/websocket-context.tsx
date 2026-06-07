@@ -1,13 +1,15 @@
 /* eslint-disable react/jsx-no-constructed-context-values */
 import React, { useContext, useCallback } from 'react';
-import { wsService } from '@/services/websocket-service';
+import { wsService, HermesRuntimeStatus } from '@/services/websocket-service';
 import { useLocalStorage } from '@/hooks/utils/use-local-storage';
 
 const host = typeof window !== 'undefined' ? window.location.host : '127.0.0.1:12393';
 const wsProtocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const httpProtocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'https:' : 'http:';
-const DEFAULT_WS_URL = `${wsProtocol}//${host}/client-ws`;
-const DEFAULT_BASE_URL = `${httpProtocol}//${host}`;
+const configuredWsUrl = import.meta.env.VITE_HERMES_WS_URL as string | undefined;
+const configuredBaseUrl = import.meta.env.VITE_HERMES_BASE_URL as string | undefined;
+const DEFAULT_WS_URL = configuredWsUrl || `${wsProtocol}//${host}/client-ws`;
+const DEFAULT_BASE_URL = configuredBaseUrl || `${httpProtocol}//${host}`;
 
 export interface HistoryInfo {
   uid: string;
@@ -27,6 +29,8 @@ interface WebSocketContextProps {
   setWsUrl: (url: string) => void;
   baseUrl: string;
   setBaseUrl: (url: string) => void;
+  runtimeStatus: HermesRuntimeStatus | null;
+  setRuntimeStatus: (status: HermesRuntimeStatus | null) => void;
 }
 
 export const WebSocketContext = React.createContext<WebSocketContextProps>({
@@ -37,6 +41,8 @@ export const WebSocketContext = React.createContext<WebSocketContextProps>({
   setWsUrl: () => {},
   baseUrl: DEFAULT_BASE_URL,
   setBaseUrl: () => {},
+  runtimeStatus: null,
+  setRuntimeStatus: () => {},
 });
 
 export function useWebSocket() {
@@ -53,6 +59,7 @@ export const defaultBaseUrl = DEFAULT_BASE_URL;
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const [wsUrl, setWsUrl] = useLocalStorage('wsUrl', DEFAULT_WS_URL);
   const [baseUrl, setBaseUrl] = useLocalStorage('baseUrl', DEFAULT_BASE_URL);
+  const [runtimeStatus, setRuntimeStatus] = React.useState<HermesRuntimeStatus | null>(null);
 
   // Auto-fix: If we are on HTTPS but the saved URLs are HTTP or pointing to the wrong port,
   // reset them to the default (which uses the current host/proxy).
@@ -90,6 +97,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     setWsUrl: handleSetWsUrl,
     baseUrl,
     setBaseUrl,
+    runtimeStatus,
+    setRuntimeStatus,
   };
 
   return (

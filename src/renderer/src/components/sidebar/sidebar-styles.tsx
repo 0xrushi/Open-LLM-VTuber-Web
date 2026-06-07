@@ -8,25 +8,51 @@ const commonStyles = {
       width: '4px',
     },
     '&::-webkit-scrollbar-track': {
-      bg: 'whiteAlpha.100',
+      bg: 'var(--hermes-surface-muted)',
       borderRadius: 'full',
     },
     '&::-webkit-scrollbar-thumb': {
-      bg: 'whiteAlpha.300',
+      bg: 'var(--hermes-accent)',
       borderRadius: 'full',
     },
   },
   panel: {
     border: '1px solid',
-    borderColor: 'whiteAlpha.200',
-    borderRadius: 'lg',
-    bg: 'blackAlpha.400',
+    borderColor: 'var(--hermes-border)',
+    borderRadius: '0',
+    bg: 'var(--hermes-surface)',
+    boxShadow: 'var(--hermes-shadow)',
   },
   title: {
-    fontSize: 'lg',
-    fontWeight: 'semibold',
-    color: 'white',
+    fontFamily: 'var(--hermes-font-display)',
+    fontSize: '2xl',
+    fontWeight: 'normal',
+    color: 'var(--hermes-text)',
     mb: 4,
+  },
+};
+
+const nousButton = {
+  borderRadius: '0',
+  border: '1px solid',
+  borderColor: 'var(--hermes-border)',
+  bg: 'var(--hermes-surface-raised)',
+  color: 'var(--hermes-text)',
+  minW: '38px',
+  height: '34px',
+  fontFamily: 'var(--hermes-font-mono)',
+  textTransform: 'uppercase' as const,
+  letterSpacing: '0.01em',
+  boxShadow: '2px 2px 0 var(--hermes-border)',
+  _hover: {
+    bg: 'var(--hermes-accent-strong)',
+    color: 'var(--hermes-accent-contrast)',
+    transform: 'translate(1px, 1px)',
+    boxShadow: '1px 1px 0 var(--hermes-border)',
+  },
+  _active: {
+    transform: 'translate(2px, 2px)',
+    boxShadow: 'none',
   },
 };
 
@@ -39,7 +65,7 @@ export const sidebarStyles = {
       height: '100%',
       width: { base: '100%', md: '440px' },
       maxWidth: { base: '100%', md: '40vw', lg: '440px' },
-      bg: 'gray.900',
+      bg: 'var(--hermes-surface)',
       transform: isCollapsed
         ? 'translateX(calc(-100% + 24px))'
         : 'translateX(0)',
@@ -61,8 +87,8 @@ export const sidebarStyles = {
       alignItems: 'center',
       justifyContent: 'center',
       cursor: 'pointer',
-      color: 'whiteAlpha.700',
-      _hover: { color: 'white' },
+      color: 'var(--hermes-text-muted)',
+      _hover: { color: 'var(--hermes-accent-strong)', bg: 'var(--hermes-surface-muted)' },
       bg: 'transparent',
       transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       zIndex: 1,
@@ -81,7 +107,10 @@ export const sidebarStyles = {
       alignItems: 'center',
       gap: 1,
       p: 2,
+      borderBottom: '1px solid',
+      borderColor: 'var(--hermes-border-muted)',
     },
+    headerButton: nousButton,
   },
 
   chatHistoryPanel: {
@@ -153,7 +182,7 @@ export const sidebarStyles = {
     },
     text: {
       fontSize: 'xs',
-      color: 'whiteAlpha.900',
+      color: 'var(--hermes-text)',
     },
     dot: {
       position: 'absolute',
@@ -176,18 +205,21 @@ export const sidebarStyles = {
     historyItem: {
       mb: 4,
       p: 3,
-      borderRadius: 'md',
-      bg: 'whiteAlpha.50',
+      borderRadius: '0',
+      border: '1px solid',
+      borderColor: 'var(--hermes-border-muted)',
+      bg: 'var(--hermes-surface-raised)',
       cursor: 'pointer',
       transition: 'all 0.2s',
       _hover: {
-        bg: 'whiteAlpha.100',
+        bg: 'var(--hermes-surface-muted)',
+        borderColor: 'var(--hermes-border)',
       },
     },
     historyItemSelected: {
-      bg: 'whiteAlpha.200',
+      bg: 'var(--hermes-surface-muted)',
       borderLeft: '3px solid',
-      borderColor: 'blue.500',
+      borderColor: 'var(--hermes-accent-strong)',
     },
     historyHeader: {
       display: 'flex',
@@ -197,44 +229,54 @@ export const sidebarStyles = {
     },
     timestamp: {
       fontSize: 'sm',
-      color: 'whiteAlpha.700',
-      fontFamily: 'mono',
+      color: 'var(--hermes-text-muted)',
+      fontFamily: 'var(--hermes-font-mono)',
     },
     deleteButton: {
-      variant: 'ghost' as const,
-      colorScheme: 'red' as const,
+      variant: 'outline' as const,
       size: 'sm' as const,
-      color: 'red.300',
-      opacity: 0.8,
+      color: 'var(--hermes-danger)',
+      borderColor: 'var(--hermes-border-muted)',
+      borderRadius: '0',
+      opacity: 0.9,
       _hover: {
         opacity: 1,
-        bg: 'whiteAlpha.200',
+        bg: 'var(--hermes-surface-muted)',
       },
     },
     messagePreview: {
       fontSize: 'sm',
-      color: 'whiteAlpha.900',
+      color: 'var(--hermes-text)',
       noOfLines: 2,
       overflow: 'hidden',
       textOverflow: 'ellipsis',
     },
     drawer: {
       content: {
-        background: 'var(--chakra-colors-gray-900)',
+        background: 'var(--hermes-surface)',
+        borderRight: '1px solid var(--hermes-border-muted)',
         maxWidth: '440px',
         marginTop: isElectron ? '30px' : '0',
         height: isElectron ? 'calc(100vh - 30px)' : '100vh',
       },
       title: {
-        color: 'white',
+        color: 'var(--hermes-text)',
+        fontFamily: 'var(--hermes-font-display)',
+        fontSize: '24px',
+        fontWeight: '400',
       },
       closeButton: {
-        color: 'white',
+        color: 'var(--hermes-text)',
       },
       actionButton: {
-        color: 'white',
-        borderColor: 'white',
+        color: 'var(--hermes-text)',
+        bg: 'var(--hermes-surface-raised)',
+        borderColor: 'var(--hermes-border)',
+        borderRadius: '0',
         variant: 'outline' as const,
+        _hover: {
+          bg: 'var(--hermes-surface-muted)',
+        },
       },
     },
   },
@@ -352,8 +394,10 @@ export const sidebarStyles = {
     },
     tabs: {
       width: '100%',
-      bg: 'whiteAlpha.50',
-      borderRadius: 'lg',
+      bg: 'var(--hermes-surface-muted)',
+      borderRadius: '0',
+      border: '1px solid',
+      borderColor: 'var(--hermes-border)',
       p: '1',
     },
     list: {
@@ -361,20 +405,23 @@ export const sidebarStyles = {
       gap: '2',
     },
     trigger: {
-      color: 'whiteAlpha.700',
+      color: 'var(--hermes-text-muted)',
       display: 'flex',
       alignItems: 'center',
       gap: 2,
       px: 3,
       py: 2,
-      borderRadius: 'md',
+      borderRadius: '0',
+      fontFamily: 'var(--hermes-font-mono)',
+      textTransform: 'uppercase' as const,
+      letterSpacing: '0.02em',
       _hover: {
-        color: 'white',
-        bg: 'whiteAlpha.50',
+        color: 'var(--hermes-text)',
+        bg: 'var(--hermes-surface-raised)',
       },
       _selected: {
-        color: 'white',
-        bg: 'whiteAlpha.200',
+        color: 'var(--hermes-accent-contrast)',
+        bg: 'var(--hermes-accent-strong)',
       },
     },
   },
@@ -456,26 +503,26 @@ export const sidebarStyles = {
       justifyContent: 'center', // Center items horizontally
     },
     icon: {
-      color: 'blue.300',
+      color: 'var(--hermes-accent)',
       boxSize: '14px',
     },
     text: {
       fontSize: 'xs',
-      color: 'whiteAlpha.700',
+      color: 'var(--hermes-text-muted)',
       fontStyle: 'italic',
     },
     spinner: {
       size: 'xs',
-      color: 'blue.300',
+      color: 'var(--hermes-accent)',
       ml: 0,
     },
     completedIcon: {
-      color: 'green.300',
+      color: 'var(--hermes-accent)',
       boxSize: '14px',
       ml: 0,
     },
     errorIcon: {
-      color: 'red.300',
+      color: 'var(--hermes-danger)',
       boxSize: '14px',
       ml: 0,
     },
@@ -484,7 +531,7 @@ export const sidebarStyles = {
 
 export const chatPanelStyles = css`
   .cs-message-list {
-    background: var(--chakra-colors-gray-900) !important;
+    background: var(--hermes-surface) !important;
     padding: var(--chakra-space-4);
   }
   
@@ -494,10 +541,12 @@ export const chatPanelStyles = css`
   }
 
   .cs-message__content {
-    background-color: var(--chakra-colors-gray-700) !important;
-    border-radius: var(--chakra-radii-md);
+    background-color: var(--hermes-surface-raised) !important;
+    border: 1px solid var(--hermes-border-muted) !important;
+    border-radius: 0 !important;
     padding: 8px !important;
-    color: var(--chakra-colors-white) !important;
+    color: var(--hermes-text) !important;
+    font-family: var(--hermes-font-mono) !important;
     font-size: 0.95rem !important;
     line-height: 1.5 !important;
     margin-top: 4px !important;
@@ -508,13 +557,14 @@ export const chatPanelStyles = css`
   }
 
   .cs-message--outgoing .cs-message__content {
-    background-color: var(--chakra-colors-gray-600) !important;
+    background-color: var(--hermes-surface-muted) !important;
+    border-color: var(--hermes-accent) !important;
   }
 
   .cs-chat-container {
     background: transparent !important;
-    border: 1px solid var(--chakra-colors-whiteAlpha-200);
-    border-radius: var(--chakra-radii-lg);
+    border: 1px solid var(--hermes-border);
+    border-radius: 0;
     padding: var(--chakra-space-2);
   }
 
@@ -531,7 +581,8 @@ export const chatPanelStyles = css`
     left: 36px !important;
     font-size: 0.875rem !important;
     font-weight: 600 !important;
-    color: var(--chakra-colors-whiteAlpha-900) !important;
+    color: var(--hermes-text-muted) !important;
+    font-family: var(--hermes-font-mono) !important;
   }
 
   .cs-message__content-wrapper {
@@ -540,19 +591,22 @@ export const chatPanelStyles = css`
   }
 
   .cs-avatar {
-    background-color: var(--chakra-colors-blue-500) !important;
-    color: white !important;
+    background-color: var(--hermes-accent-strong) !important;
+    color: var(--hermes-accent-contrast) !important;
     width: 28px !important;
     height: 28px !important;
     font-size: 14px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border-radius: 50% !important;
+    border-radius: 0 !important;
+    border: 1px solid var(--hermes-border) !important;
+    font-family: var(--hermes-font-mono) !important;
   }
 
   .cs-message--outgoing .cs-avatar {
-    background-color: var(--chakra-colors-green-500) !important;
+    background-color: var(--hermes-surface-muted) !important;
+    color: var(--hermes-text) !important;
   }
 
   .cs-message__header {

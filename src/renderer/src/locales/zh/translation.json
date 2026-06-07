@@ -13,7 +13,19 @@
       "asr": "识别",
       "tts": "合成",
       "agent": "代理",
-      "about": "关于"
+      "about": "关于",
+      "connections": "连接"
+    },
+    "connections": {
+      "description": "已配置/本地服务的 HTTP 连通状态。",
+      "refresh": "刷新",
+      "backendBase": "后端基础 URL",
+      "websocketEndpoint": "WebSocket 端点（HTTP 探测）",
+      "tts": "TTS（ElevenLabs / 浏览器回退）",
+      "chatterboxTts": "Chatterbox TTS",
+      "gptSovitsTts": "GPT-SoVITS TTS",
+      "xtts": "XTTS",
+      "sparkTts": "Spark TTS"
     },
     "general": {
       "language": "语言",

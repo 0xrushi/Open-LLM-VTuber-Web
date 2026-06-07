@@ -60,6 +60,7 @@ interface SelectFieldProps {
   onChange: (value: string[]) => void
   collection: ReturnType<typeof createListCollection<{ label: string; value: string }>>
   placeholder: string
+  disabled?: boolean
 }
 
 interface NumberFieldProps {
@@ -86,6 +87,7 @@ interface InputFieldProps {
   onChange: (value: string) => void
   placeholder?: string
   help?: string
+  disabled?: boolean
 }
 
 // Reusable Components
@@ -95,6 +97,7 @@ export function SelectField({
   onChange,
   collection,
   placeholder,
+  disabled,
 }: SelectFieldProps): JSX.Element {
   return (
     <Field
@@ -106,13 +109,18 @@ export function SelectField({
         collection={collection}
         value={value}
         onValueChange={(e) => onChange(e.value)}
+        disabled={disabled}
       >
         <SelectTrigger {...settingStyles.general.select.trigger}>
           <SelectValueText placeholder={placeholder} />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent {...settingStyles.general.select.content}>
           {collection.items.map((item) => (
-            <SelectItem key={item.value} item={item}>
+            <SelectItem
+              key={item.value}
+              item={item}
+              {...settingStyles.general.select.item}
+            >
               {item.label}
             </SelectItem>
           ))}
@@ -187,6 +195,7 @@ export function InputField({
   onChange,
   placeholder,
   help,
+  disabled,
 }: InputFieldProps): JSX.Element {
   return (
     <Field
@@ -203,6 +212,7 @@ export function InputField({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
       />
     </Field>
   );

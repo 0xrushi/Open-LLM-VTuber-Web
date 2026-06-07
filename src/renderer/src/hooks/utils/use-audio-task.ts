@@ -17,14 +17,69 @@ import * as LAppDefine from '../../../WebSDK/src/lappdefine';
 // Simple type alias for Live2D model
 type Live2DModel = any;
 
+const ELEVENLABS_API_KEY = import.meta.env.VITE_ELEVENLABS_API_KEY as string | undefined;
+const ELEVENLABS_VOICE_ID = (import.meta.env.VITE_ELEVENLABS_VOICE_ID as string | undefined) || '21m00Tcm4TlvDq8ikWAM';
+const ELEVENLABS_MODEL_ID = (import.meta.env.VITE_ELEVENLABS_MODEL_ID as string | undefined) || 'eleven_multilingual_v2';
+const ELEVENLABS_OUTPUT_FORMAT = (import.meta.env.VITE_ELEVENLABS_OUTPUT_FORMAT as string | undefined) || 'mp3_44100_128';
+
+const synthesizeElevenLabsSpeech = async (text: string, baseUrl?: string): Promise<string> => {
+  const proxyUrl = baseUrl ? `${baseUrl}/api/infra/tts-speech` : '';
+
+  // Prefer the local Hermes UI adapter proxy. It reads the ElevenLabs key from
+  // the repo-root .env.local, avoids stale Vite env injection, and keeps the
+  // browser from needing to call ElevenLabs with the API key directly.
+  if (proxyUrl) {
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+
+    if (response.ok) {
+      return URL.createObjectURL(await response.blob());
+    }
+
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Hermes UI ElevenLabs proxy failed (${response.status}): ${errorText || response.statusText}`);
+  }
+
+  if (!ELEVENLABS_API_KEY) {
+    throw new Error('VITE_ELEVENLABS_API_KEY is not configured');
+  }
+
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=${ELEVENLABS_OUTPUT_FORMAT}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'xi-api-key': ELEVENLABS_API_KEY,
+      },
+      body: JSON.stringify({
+        text,
+        model_id: ELEVENLABS_MODEL_ID,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`ElevenLabs TTS failed (${response.status}): ${errorText || response.statusText}`);
+  }
+
+  return URL.createObjectURL(await response.blob());
+};
+
 interface AudioTaskOptions {
   audioBase64: string
+  audioMime?: string
   volumes: number[]
   sliceLength: number
   displayText?: DisplayText | null
   expressions?: string[] | number[] | null
   speaker_uid?: string
   forwarded?: boolean
+  synthesizeInBrowser?: boolean
 }
 
 /**
@@ -35,7 +90,7 @@ export const useAudioTask = () => {
   const { aiState, backendSynthComplete, setBackendSynthComplete } = useAiState();
   const { setSubtitleText } = useSubtitle();
   const { appendResponse, appendAIMessage } = useChatHistory();
-  const { sendMessage } = useWebSocket();
+  const { sendMessage, baseUrl } = useWebSocket();
   const { setExpression } = useLive2DExpression();
 
   // State refs to avoid stale closures
@@ -60,6 +115,7 @@ export const useAudioTask = () => {
    */
   const stopCurrentAudioAndLipSync = useCallback(() => {
     audioManager.stopCurrentAudioAndLipSync();
+    window.speechSynthesis?.cancel();
   }, []);
 
   /**
@@ -80,7 +136,9 @@ export const useAudioTask = () => {
       return;
     }
 
-    const { audioBase64, displayText, expressions, forwarded } = options;
+    const {
+      audioBase64, audioMime, displayText, expressions, forwarded, synthesizeInBrowser,
+    } = options;
 
     // Update display text
     if (displayText) {
@@ -98,10 +156,107 @@ export const useAudioTask = () => {
       }
     }
 
+    // Use frontend-owned TTS for plain Hermes text responses. Prefer
+    // ElevenLabs when configured; fall back to browser-native speech synthesis.
+    if (synthesizeInBrowser && displayText?.text && !audioBase64) {
+      const speakWithBrowserTts = () => {
+        const speech = window.speechSynthesis;
+        const Utterance = window.SpeechSynthesisUtterance;
+
+        if (!speech || !Utterance) {
+          console.warn('Browser speech synthesis is not available; showing text only.');
+          resolve();
+          return;
+        }
+
+        try {
+          speech.cancel();
+          const utterance = new Utterance(displayText.text);
+          let isFinished = false;
+
+          const cleanup = () => {
+            window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
+            if (!isFinished) {
+              isFinished = true;
+              resolve();
+            }
+          };
+
+          utterance.onstart = () => {
+            updateSubtitle(displayText.text);
+            window.dispatchEvent(new CustomEvent('vrm-audio-start'));
+          };
+          utterance.onend = cleanup;
+          utterance.onerror = (event) => {
+            console.error('Browser speech synthesis error:', event);
+            cleanup();
+          };
+
+          speech.speak(utterance);
+        } catch (error) {
+          console.error('Browser speech synthesis setup error:', error);
+          resolve();
+        }
+      };
+
+      if (!baseUrl && !ELEVENLABS_API_KEY) {
+        speakWithBrowserTts();
+        return;
+      }
+
+      synthesizeElevenLabsSpeech(displayText.text, baseUrl)
+        .then((audioUrl) => {
+          const audio = new Audio(audioUrl);
+          audioManager.setCurrentAudio(audio, null);
+          let isFinished = false;
+          let didStartVrmAudio = false;
+
+          const cleanup = () => {
+            if (didStartVrmAudio) {
+              didStartVrmAudio = false;
+              window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
+            }
+            audioManager.clearCurrentAudio(audio);
+            URL.revokeObjectURL(audioUrl);
+            if (!isFinished) {
+              isFinished = true;
+              resolve();
+            }
+          };
+
+          audio.addEventListener('canplaythrough', () => {
+            if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
+              console.warn('ElevenLabs audio playback cancelled due to interruption or audio was stopped');
+              cleanup();
+              return;
+            }
+            updateSubtitle(displayText.text);
+            didStartVrmAudio = true;
+            window.dispatchEvent(new CustomEvent('vrm-audio-start'));
+            audio.play().catch((error) => {
+              console.error('ElevenLabs audio play error:', error);
+              cleanup();
+            });
+          });
+
+          audio.addEventListener('ended', cleanup);
+          audio.addEventListener('error', (error) => {
+            console.error('ElevenLabs audio playback error:', error);
+            cleanup();
+          });
+          audio.load();
+        })
+        .catch((error) => {
+          console.error('ElevenLabs speech synthesis failed; falling back to browser TTS:', error);
+          speakWithBrowserTts();
+        });
+      return;
+    }
+
     try {
       // Process audio if available
       if (audioBase64) {
-        const audioDataUrl = `data:audio/wav;base64,${audioBase64}`;
+        const audioDataUrl = `data:${audioMime || 'audio/wav'};base64,${audioBase64}`;
 
         // Try to get Live2D manager and model (optional for VRM models)
         const live2dManager = (window as any).getLive2DManager?.();

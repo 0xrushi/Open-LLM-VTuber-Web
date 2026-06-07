@@ -3,7 +3,7 @@
 // eslint-disable-next-line object-curly-newline
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { wsService, MessageEvent } from '@/services/websocket-service';
+import { wsService, MessageEvent, HermesRuntimeStatus } from '@/services/websocket-service';
 import {
   WebSocketContext, HistoryInfo, defaultWsUrl, defaultBaseUrl,
 } from '@/context/websocket-context';
@@ -27,10 +27,17 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const [wsState, setWsState] = useState<string>('CLOSED');
   const [wsUrl, setWsUrl] = useLocalStorage<string>('wsUrl', defaultWsUrl);
   const [baseUrl, setBaseUrl] = useLocalStorage<string>('baseUrl', defaultBaseUrl);
+  const [runtimeStatus, setRuntimeStatus] = useState<HermesRuntimeStatus | null>(null);
   const { aiState, setAiState, backendSynthComplete, setBackendSynthComplete } = useAiState();
   const { setModelInfo } = useLive2DConfig();
   const { setSubtitleText } = useSubtitle();
-  const { clearResponse, setForceNewMessage, appendHumanMessage, appendOrUpdateToolCallMessage } = useChatHistory();
+  const {
+    clearResponse,
+    setForceNewMessage,
+    appendHumanMessage,
+    appendOrUpdateToolCallMessage,
+    appendDebugTraceMessage,
+  } = useChatHistory();
   const { addAudioTask } = useAudioTask();
   const bgUrlContext = useBgUrl();
   const { confUid, setConfName, setConfUid, setConfigFiles } = useConfig();
@@ -99,6 +106,9 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
           handleControlMessage(message.text);
         }
         break;
+      case 'runtime-status':
+        setRuntimeStatus(message.runtime || (message as unknown as HermesRuntimeStatus));
+        break;
       case 'set-model-and-conf':
         setAiState('loading');
         if (message.conf_name) {
@@ -124,7 +134,19 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         break;
       case 'full-text':
         if (message.text) {
-          setSubtitleText(message.text);
+          addAudioTask({
+            audioBase64: '',
+            volumes: [],
+            sliceLength: 0,
+            displayText: {
+              text: message.text,
+              name: message.name || 'Hermes',
+              avatar: '',
+            },
+            expressions: null,
+            forwarded: true,
+            synthesizeInBrowser: true,
+          });
         }
         break;
       case 'config-files':
@@ -159,6 +181,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
           console.log("actions", message.actions);
           addAudioTask({
             audioBase64: message.audio || '',
+            audioMime: message.audio_mime,
             volumes: message.volumes || [],
             sliceLength: message.slice_length || 0,
             displayText: message.display_text || null,
@@ -303,10 +326,21 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
           console.warn('Received incomplete tool_call_status message:', message);
         }
         break;
+      case 'internal_debug_trace':
+        appendDebugTraceMessage({
+          id: `${message.timestamp || Date.now()}-debug`,
+          role: 'ai',
+          type: 'internal_debug_trace',
+          name: message.name || 'AI',
+          title: message.title || 'Model internal tool/thinking trace',
+          content: message.content || '',
+          timestamp: message.timestamp || new Date().toISOString(),
+        });
+        break;
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setModelInfo, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setModelInfo, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, appendDebugTraceMessage, interrupt, setBrowserViewData, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);
@@ -329,7 +363,9 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
     setWsUrl,
     baseUrl,
     setBaseUrl,
-  }), [wsState, wsUrl, baseUrl]);
+    runtimeStatus,
+    setRuntimeStatus,
+  }), [wsState, wsUrl, baseUrl, runtimeStatus]);
 
   return (
     <WebSocketContext.Provider value={webSocketContextValue}>

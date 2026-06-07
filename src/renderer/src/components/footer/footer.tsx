@@ -69,7 +69,7 @@ const ActionButtons = memo(({
   <HStack gap={2}>
     <IconButton
       aria-label="Toggle microphone"
-      bg={micOn ? 'green.500' : 'red.500'}
+      bg={micOn ? 'var(--hermes-accent-strong)' : 'var(--hermes-danger)'}
       {...footerStyles.footer.actionButton}
       onClick={onMicToggle}
     >
@@ -77,7 +77,8 @@ const ActionButtons = memo(({
     </IconButton>
     <IconButton
       aria-label="Raise hand"
-      bg="yellow.500"
+      bg="var(--hermes-gold)"
+      color="var(--hermes-text)"
       {...footerStyles.footer.actionButton}
       onClick={onInterrupt}
     >
@@ -85,7 +86,8 @@ const ActionButtons = memo(({
     </IconButton>
     <IconButton
       aria-label={showFloatingControls ? 'Hide floating controls' : 'Show floating controls'}
-      bg={showFloatingControls ? 'blue.500' : 'gray.600'}
+      bg={showFloatingControls ? 'var(--hermes-accent-strong)' : 'var(--hermes-surface-muted)'}
+      color={showFloatingControls ? 'var(--hermes-accent-contrast)' : 'var(--hermes-text)'}
       {...footerStyles.footer.actionButton}
       onClick={onToggleFloatingControls}
     >

@@ -1,17 +1,18 @@
 /* eslint-disable react/require-default-props */
 import { Box, Button, Menu } from '@chakra-ui/react';
 import {
-  FiSettings, FiClock, FiPlus, FiChevronLeft, FiUsers, FiLayers
+  FiSettings, FiClock, FiPlus, FiChevronLeft, FiLayers
 } from 'react-icons/fi';
 import { memo } from 'react';
+import { ColorModeButton } from '@/components/ui/color-mode';
 import { sidebarStyles } from './sidebar-styles';
 import SettingUI from './setting/setting-ui';
 import ChatHistoryPanel from './chat-history-panel';
 import BottomTab from './bottom-tab';
 import HistoryDrawer from './history-drawer';
 import { useSidebar } from '@/hooks/sidebar/use-sidebar';
-import GroupDrawer from './group-drawer';
 import { ModeType } from '@/context/mode-context';
+import { useLive2DConfig } from '@/context/live2d-config-context';
 
 // Type definitions
 interface SidebarProps {
@@ -25,6 +26,7 @@ interface HeaderButtonsProps {
   setMode: (mode: ModeType) => void
   currentMode: 'window' | 'pet'
   isElectron: boolean
+  isVrmModel: boolean
 }
 
 // Reusable components
@@ -51,7 +53,7 @@ const ModeMenu = memo(({ setMode, currentMode, isElectron }: {
   isElectron: boolean
 }) => (
   <Menu.Root>
-    <Menu.Trigger as={Button} aria-label="Mode Menu" title="Change Mode">
+    <Menu.Trigger as={Button} aria-label="Mode Menu" title="Change Mode" {...sidebarStyles.sidebar.headerButton}>
       <FiLayers />
     </Menu.Trigger>
     <Menu.Positioner>
@@ -82,29 +84,27 @@ const ModeMenu = memo(({ setMode, currentMode, isElectron }: {
 
 ModeMenu.displayName = 'ModeMenu';
 
-const HeaderButtons = memo(({ onSettingsOpen, onNewHistory, setMode, currentMode, isElectron }: HeaderButtonsProps) => (
+const HeaderButtons = memo(({ onSettingsOpen, onNewHistory, setMode, currentMode, isElectron, isVrmModel }: HeaderButtonsProps) => (
   <Box display="flex" gap={1}>
-    <Button onClick={onSettingsOpen}>
+    <Button onClick={onSettingsOpen} {...sidebarStyles.sidebar.headerButton}>
       <FiSettings />
     </Button>
 
-    <GroupDrawer>
-      <Button>
-        <FiUsers />
-      </Button>
-    </GroupDrawer>
-
     <HistoryDrawer>
-      <Button>
+      <Button {...sidebarStyles.sidebar.headerButton}>
         <FiClock />
       </Button>
     </HistoryDrawer>
 
-    <Button onClick={onNewHistory}>
+    <Button onClick={onNewHistory} {...sidebarStyles.sidebar.headerButton}>
       <FiPlus />
     </Button>
 
-    <ModeMenu setMode={setMode} currentMode={currentMode} isElectron={isElectron} />
+    {!isVrmModel && (
+      <ModeMenu setMode={setMode} currentMode={currentMode} isElectron={isElectron} />
+    )}
+
+    <ColorModeButton {...sidebarStyles.sidebar.headerButton} />
   </Box>
 ));
 
@@ -115,7 +115,8 @@ const SidebarContent = memo(({
   onNewHistory, 
   setMode, 
   currentMode,
-  isElectron
+  isElectron,
+  isVrmModel
 }: HeaderButtonsProps) => (
   <Box {...sidebarStyles.sidebar.content}>
     <Box {...sidebarStyles.sidebar.header}>
@@ -125,6 +126,7 @@ const SidebarContent = memo(({
         setMode={setMode}
         currentMode={currentMode}
         isElectron={isElectron}
+        isVrmModel={isVrmModel}
       />
     </Box>
     <ChatHistoryPanel />
@@ -136,6 +138,7 @@ SidebarContent.displayName = 'SidebarContent';
 
 // Main component
 function Sidebar({ isCollapsed = false, onToggle }: SidebarProps): JSX.Element {
+  const { modelInfo } = useLive2DConfig();
   const {
     settingsOpen,
     onSettingsOpen,
@@ -145,6 +148,8 @@ function Sidebar({ isCollapsed = false, onToggle }: SidebarProps): JSX.Element {
     currentMode,
     isElectron,
   } = useSidebar();
+  const isVrmModel = String(modelInfo?.renderer ?? '').toLowerCase() === 'vrm'
+    || /\.(vrm|glb|gltf)(\?|#|$)/i.test(modelInfo?.url ?? '');
 
   return (
     <Box {...sidebarStyles.sidebar.container(isCollapsed)}>
@@ -157,6 +162,7 @@ function Sidebar({ isCollapsed = false, onToggle }: SidebarProps): JSX.Element {
           setMode={setMode}
           currentMode={currentMode}
           isElectron={isElectron}
+          isVrmModel={isVrmModel}
         />
       )}
 

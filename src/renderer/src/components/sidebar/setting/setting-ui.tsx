@@ -22,6 +22,7 @@ import ASR from './asr';
 import TTS from './tts';
 import Agent from './agent';
 import About from './about';
+import Connections from './connections';
 
 interface SettingUIProps {
   open: boolean;
@@ -89,6 +90,9 @@ function SettingUI({ open, onClose }: SettingUIProps): JSX.Element {
         <Tabs.Content value="about" {...settingStyles.settingUI.tabs.content}>
           <About />
         </Tabs.Content>
+        <Tabs.Content value="connections" {...settingStyles.settingUI.tabs.content}>
+          <Connections />
+        </Tabs.Content>
       </Tabs.ContentGroup>
     ),
     [handleSaveCallback, handleCancelCallback],
@@ -113,7 +117,7 @@ function SettingUI({ open, onClose }: SettingUIProps): JSX.Element {
           </div>
         </DrawerHeader>
 
-        <DrawerBody>
+        <DrawerBody {...settingStyles.settingUI.drawerBody}>
           <Tabs.Root
             defaultValue="general"
             value={activeTab}
@@ -157,17 +161,23 @@ function SettingUI({ open, onClose }: SettingUIProps): JSX.Element {
               >
                 {t('settings.tabs.about')}
               </Tabs.Trigger>
+              <Tabs.Trigger
+                value="connections"
+                {...settingStyles.settingUI.tabs.trigger}
+              >
+                {t('settings.tabs.connections')}
+              </Tabs.Trigger>
             </Tabs.List>
 
             {tabsContent}
           </Tabs.Root>
         </DrawerBody>
 
-        <DrawerFooter>
-          <Button colorPalette="red" onClick={handleCancel}>
+        <DrawerFooter {...settingStyles.settingUI.drawerFooter}>
+          <Button colorPalette="red" onClick={handleCancel} {...settingStyles.settingUI.footerButton}>
             {t('common.cancel')}
           </Button>
-          <Button colorPalette="blue" onClick={handleSave}>
+          <Button colorPalette="blue" onClick={handleSave} {...settingStyles.settingUI.footerButton}>
             {t('common.save')}
           </Button>
         </DrawerFooter>

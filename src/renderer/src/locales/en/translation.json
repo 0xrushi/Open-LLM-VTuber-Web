@@ -13,7 +13,19 @@
       "asr": "ASR",
       "tts": "TTS",
       "agent": "Agent",
-      "about": "About"
+      "about": "About",
+      "connections": "Connections"
+    },
+    "connections": {
+      "description": "HTTP reachability status for configured/local services.",
+      "refresh": "Refresh",
+      "backendBase": "Backend Base URL",
+      "websocketEndpoint": "WebSocket Endpoint (HTTP probe)",
+      "tts": "TTS (ElevenLabs / browser fallback)",
+      "chatterboxTts": "Chatterbox TTS",
+      "gptSovitsTts": "GPT-SoVITS TTS",
+      "xtts": "XTTS",
+      "sparkTts": "Spark TTS"
     },
     "general": {
       "language": "Language",

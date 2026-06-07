@@ -1,7 +1,91 @@
+@import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+    color-scheme: light;
+    --hermes-bg: #eef2ed;
+    --hermes-bg-pattern: rgba(34, 61, 39, 0.055);
+    --hermes-surface: rgba(238, 242, 237, 0.94);
+    --hermes-surface-raised: #f7faf5;
+    --hermes-surface-muted: #e2e8df;
+    --hermes-border: #243d27;
+    --hermes-border-muted: rgba(36, 61, 39, 0.38);
+    --hermes-text: #172b1b;
+    --hermes-text-muted: rgba(23, 43, 27, 0.70);
+    --hermes-accent: #2f6c3d;
+    --hermes-accent-strong: #223d27;
+    --hermes-accent-contrast: #eef2ed;
+    --hermes-gold: #f3c54b;
+    --hermes-danger: #9f3b34;
+    --hermes-shadow: 5px 5px 0 rgba(36, 61, 39, 0.82);
+    --hermes-shadow-soft: 0 14px 34px rgba(23, 43, 27, 0.14);
+    --hermes-font-display: 'IM Fell English', Georgia, serif;
+    --hermes-font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.dark {
+    color-scheme: dark;
+    --hermes-bg: #08110b;
+    --hermes-bg-pattern: rgba(196, 214, 194, 0.055);
+    --hermes-surface: rgba(12, 25, 15, 0.94);
+    --hermes-surface-raised: #102116;
+    --hermes-surface-muted: #172a1b;
+    --hermes-border: #c6d0c2;
+    --hermes-border-muted: rgba(198, 208, 194, 0.38);
+    --hermes-text: #edf3ea;
+    --hermes-text-muted: rgba(237, 243, 234, 0.72);
+    --hermes-accent: #79b06f;
+    --hermes-accent-strong: #dce6d8;
+    --hermes-accent-contrast: #08110b;
+    --hermes-gold: #ffd45f;
+    --hermes-danger: #e0786e;
+    --hermes-shadow: 5px 5px 0 rgba(198, 208, 194, 0.36);
+    --hermes-shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not(.light) {
+        color-scheme: dark;
+        --hermes-bg: #08110b;
+        --hermes-bg-pattern: rgba(196, 214, 194, 0.055);
+        --hermes-surface: rgba(12, 25, 15, 0.94);
+        --hermes-surface-raised: #102116;
+        --hermes-surface-muted: #172a1b;
+        --hermes-border: #c6d0c2;
+        --hermes-border-muted: rgba(198, 208, 194, 0.38);
+        --hermes-text: #edf3ea;
+        --hermes-text-muted: rgba(237, 243, 234, 0.72);
+        --hermes-accent: #79b06f;
+        --hermes-accent-strong: #dce6d8;
+        --hermes-accent-contrast: #08110b;
+        --hermes-gold: #ffd45f;
+        --hermes-danger: #e0786e;
+        --hermes-shadow: 5px 5px 0 rgba(198, 208, 194, 0.36);
+        --hermes-shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.45);
+    }
+}
+
 body, html {
     margin: 0;
     padding: 0;
     overflow: visible;
-    background-color: transparent;
+    background-color: var(--hermes-bg);
+    color: var(--hermes-text);
+    font-family: var(--hermes-font-mono);
 }
 
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.65;
+    background-image:
+        radial-gradient(var(--hermes-bg-pattern) 1px, transparent 1px),
+        linear-gradient(0deg, transparent 24px, var(--hermes-bg-pattern) 25px, transparent 26px);
+    background-size: 12px 12px, 100% 26px;
+    z-index: 0;
+}
+
+button, input, textarea, select {
+    font-family: var(--hermes-font-mono);
+}

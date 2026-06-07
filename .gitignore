@@ -59,3 +59,9 @@ out
 
 # Cursor files
 .cursorrules
+
+# Local character/model assets
+*.glb
+*.vrm
+characters/
+src/renderer/public/live2d-models/

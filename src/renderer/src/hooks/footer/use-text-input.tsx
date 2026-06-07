@@ -6,6 +6,7 @@ import { useChatHistory } from '@/context/chat-history-context';
 import { useVAD } from '@/context/vad-context';
 import { useMediaCapture } from '@/hooks/utils/use-media-capture';
 import { resolveSceneActionFromSkill } from '@/skills/scene-actions/scene-action-skill';
+import { buildHermesSessionMetadata } from '@/utils/hermes-session-routing';
 
 const dispatchSceneAction = (action: string, objectId: string, sourceText: string): boolean => {
   if (!objectId) return false;
@@ -52,7 +53,7 @@ export function useTextInput() {
   const wsContext = useWebSocket();
   const { aiState } = useAiState();
   const { interrupt } = useInterrupt();
-  const { appendHumanMessage } = useChatHistory();
+  const { appendHumanMessage, currentHistoryUid } = useChatHistory();
   const { stopMic, autoStopMic } = useVAD();
   const { captureAllMedia } = useMediaCapture();
 
@@ -86,6 +87,7 @@ export function useTextInput() {
       type: 'text-input',
       text: trimmedText,
       images,
+      ...buildHermesSessionMetadata(currentHistoryUid, 'text'),
     });
 
     if (autoStopMic) stopMic();

@@ -16,6 +16,7 @@ interface ChatHistoryState {
   appendHumanMessage: (content: string) => void;
   appendAIMessage: (content: string, name?: string, avatar?: string) => void;
   appendOrUpdateToolCallMessage: (toolMessageData: Partial<Message>) => void; // Accept partial data
+  appendDebugTraceMessage: (debugMessageData: Partial<Message>) => void;
   setMessages: (messages: Message[]) => void; // Use the unified Message type
   setHistoryList: (
     value: HistoryInfo[] | ((prev: HistoryInfo[]) => HistoryInfo[])
@@ -158,6 +159,25 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
   }, []);
 
   /**
+   * Append internal debug trace message (collapsible in UI).
+   */
+  const appendDebugTraceMessage = useCallback((debugMessageData: Partial<Message>) => {
+    if (!debugMessageData.content || !debugMessageData.timestamp) {
+      return;
+    }
+    const newDebugMessage: Message = {
+      id: debugMessageData.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      role: 'ai',
+      type: 'internal_debug_trace',
+      name: debugMessageData.name || '',
+      title: debugMessageData.title || 'Internal trace',
+      content: debugMessageData.content,
+      timestamp: debugMessageData.timestamp,
+    };
+    setMessages((prevMessages) => [...prevMessages, newDebugMessage]);
+  }, []);
+
+  /**
    * Update the history list with the latest message
    * @param uid - History unique identifier
    * @param latestMessage - Latest message to update with
@@ -208,6 +228,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
       appendHumanMessage,
       appendAIMessage,
       appendOrUpdateToolCallMessage, // Add to context value
+      appendDebugTraceMessage,
       setMessages,
       setHistoryList,
       setCurrentHistoryUid,
@@ -225,6 +246,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
       appendHumanMessage,
       appendAIMessage,
       appendOrUpdateToolCallMessage, // Add dependency
+      appendDebugTraceMessage,
       updateHistoryList,
       fullResponse,
       appendResponse,

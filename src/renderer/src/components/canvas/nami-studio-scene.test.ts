@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createNamiAuthoredEnvironmentRegistry } from './nami-studio-scene';
 
 describe('createNamiAuthoredEnvironmentRegistry', () => {
-  it('uses the copied Nami pose hips translation to calibrate desk sitting', () => {
+  it('computes desk sitting interaction point from authored desk position', () => {
     const registry = createNamiAuthoredEnvironmentRegistry();
     const desk = registry.objects.find((object) => object.id === 'desk');
 
