@@ -21,7 +21,7 @@
       "refresh": "Refresh",
       "backendBase": "Backend Base URL",
       "websocketEndpoint": "WebSocket Endpoint (HTTP probe)",
-      "tts": "TTS (ElevenLabs / browser fallback)",
+      "tts": "TTS (Fish Audio)",
       "chatterboxTts": "Chatterbox TTS",
       "gptSovitsTts": "GPT-SoVITS TTS",
       "xtts": "XTTS",

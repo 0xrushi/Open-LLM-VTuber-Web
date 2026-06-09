@@ -17,57 +17,28 @@ import * as LAppDefine from '../../../WebSDK/src/lappdefine';
 // Simple type alias for Live2D model
 type Live2DModel = any;
 
-const ELEVENLABS_API_KEY = import.meta.env.VITE_ELEVENLABS_API_KEY as string | undefined;
-const ELEVENLABS_VOICE_ID = (import.meta.env.VITE_ELEVENLABS_VOICE_ID as string | undefined) || '21m00Tcm4TlvDq8ikWAM';
-const ELEVENLABS_MODEL_ID = (import.meta.env.VITE_ELEVENLABS_MODEL_ID as string | undefined) || 'eleven_multilingual_v2';
-const ELEVENLABS_OUTPUT_FORMAT = (import.meta.env.VITE_ELEVENLABS_OUTPUT_FORMAT as string | undefined) || 'mp3_44100_128';
-
-const synthesizeElevenLabsSpeech = async (text: string, baseUrl?: string): Promise<string> => {
-  const proxyUrl = baseUrl ? `${baseUrl}/api/infra/tts-speech` : '';
-
-  // Prefer the local Hermes UI adapter proxy. It reads the ElevenLabs key from
-  // the repo-root .env.local, avoids stale Vite env injection, and keeps the
-  // browser from needing to call ElevenLabs with the API key directly.
-  if (proxyUrl) {
-    const response = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
-
-    if (response.ok) {
-      return URL.createObjectURL(await response.blob());
-    }
-
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`Hermes UI ElevenLabs proxy failed (${response.status}): ${errorText || response.statusText}`);
+const synthesizeFishSpeech = async (text: string, baseUrl?: string): Promise<string> => {
+  if (!baseUrl) {
+    throw new Error('Hermes UI adapter base URL is not configured; cannot synthesize Fish Audio TTS.');
   }
 
-  if (!ELEVENLABS_API_KEY) {
-    throw new Error('VITE_ELEVENLABS_API_KEY is not configured');
+  const proxyUrl = `${baseUrl}/api/infra/tts-speech`;
+
+  // Fish Audio is intentionally adapter-proxied only. Do not fall back to
+  // browser speechSynthesis or browser-direct API keys; failures should be
+  // visible so bad Fish configuration is fixed instead of silently masked.
+  const response = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+
+  if (response.ok) {
+    return URL.createObjectURL(await response.blob());
   }
 
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=${ELEVENLABS_OUTPUT_FORMAT}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'xi-api-key': ELEVENLABS_API_KEY,
-      },
-      body: JSON.stringify({
-        text,
-        model_id: ELEVENLABS_MODEL_ID,
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`ElevenLabs TTS failed (${response.status}): ${errorText || response.statusText}`);
-  }
-
-  return URL.createObjectURL(await response.blob());
+  const errorText = await response.text().catch(() => '');
+  throw new Error(`Hermes UI Fish Audio proxy failed (${response.status}): ${errorText || response.statusText}`);
 };
 
 interface AudioTaskOptions {
@@ -115,13 +86,12 @@ export const useAudioTask = () => {
    */
   const stopCurrentAudioAndLipSync = useCallback(() => {
     audioManager.stopCurrentAudioAndLipSync();
-    window.speechSynthesis?.cancel();
   }, []);
 
   /**
    * Handle audio playback with Live2D lip sync
    */
-  const handleAudioPlayback = (options: AudioTaskOptions): Promise<void> => new Promise((resolve) => {
+  const handleAudioPlayback = (options: AudioTaskOptions): Promise<void> => new Promise((resolve, reject) => {
     const {
       aiState: currentAiState,
       setSubtitleText: updateSubtitle,
@@ -156,55 +126,11 @@ export const useAudioTask = () => {
       }
     }
 
-    // Use frontend-owned TTS for plain Hermes text responses. Prefer
-    // ElevenLabs when configured; fall back to browser-native speech synthesis.
+    // Use frontend-owned Fish Audio for plain Hermes text responses. The browser
+    // speechSynthesis fallback is deliberately disabled so Fish/proxy failures
+    // surface as real errors instead of being silently masked.
     if (synthesizeInBrowser && displayText?.text && !audioBase64) {
-      const speakWithBrowserTts = () => {
-        const speech = window.speechSynthesis;
-        const Utterance = window.SpeechSynthesisUtterance;
-
-        if (!speech || !Utterance) {
-          console.warn('Browser speech synthesis is not available; showing text only.');
-          resolve();
-          return;
-        }
-
-        try {
-          speech.cancel();
-          const utterance = new Utterance(displayText.text);
-          let isFinished = false;
-
-          const cleanup = () => {
-            window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
-            if (!isFinished) {
-              isFinished = true;
-              resolve();
-            }
-          };
-
-          utterance.onstart = () => {
-            updateSubtitle(displayText.text);
-            window.dispatchEvent(new CustomEvent('vrm-audio-start'));
-          };
-          utterance.onend = cleanup;
-          utterance.onerror = (event) => {
-            console.error('Browser speech synthesis error:', event);
-            cleanup();
-          };
-
-          speech.speak(utterance);
-        } catch (error) {
-          console.error('Browser speech synthesis setup error:', error);
-          resolve();
-        }
-      };
-
-      if (!baseUrl && !ELEVENLABS_API_KEY) {
-        speakWithBrowserTts();
-        return;
-      }
-
-      synthesizeElevenLabsSpeech(displayText.text, baseUrl)
+      synthesizeFishSpeech(displayText.text, baseUrl)
         .then((audioUrl) => {
           const audio = new Audio(audioUrl);
           audioManager.setCurrentAudio(audio, null);
@@ -226,7 +152,7 @@ export const useAudioTask = () => {
 
           audio.addEventListener('canplaythrough', () => {
             if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
-              console.warn('ElevenLabs audio playback cancelled due to interruption or audio was stopped');
+              console.warn('Fish Audio playback cancelled due to interruption or audio was stopped');
               cleanup();
               return;
             }
@@ -234,21 +160,28 @@ export const useAudioTask = () => {
             didStartVrmAudio = true;
             window.dispatchEvent(new CustomEvent('vrm-audio-start'));
             audio.play().catch((error) => {
-              console.error('ElevenLabs audio play error:', error);
+              console.error('Fish Audio audio play error:', error);
               cleanup();
             });
           });
 
           audio.addEventListener('ended', cleanup);
           audio.addEventListener('error', (error) => {
-            console.error('ElevenLabs audio playback error:', error);
+            console.error('Fish Audio audio playback error:', error);
             cleanup();
           });
           audio.load();
         })
         .catch((error) => {
-          console.error('ElevenLabs speech synthesis failed; falling back to browser TTS:', error);
-          speakWithBrowserTts();
+          const message = `Fish Audio speech synthesis failed: ${error instanceof Error ? error.message : String(error)}`;
+          console.error(message, error);
+          toaster.create({
+            title: message,
+            type: 'error',
+            duration: 6000,
+          });
+          window.dispatchEvent(new CustomEvent('vrm-audio-stop'));
+          reject(new Error(message));
         });
       return;
     }

@@ -75,14 +75,15 @@ export function WakeWordProvider({ children }: { children: React.ReactNode }) {
 
     isStartingRef.current = true;
     const detector = new NanoWakeWordDetector({
-      threshold: 0.95,
+      threshold: 0.92,
       cooldownMs: 2500,
+      consecutiveDetections: 1,
       onScore: setLastWakeWordScore,
       onDetected: async () => {
         stopWakeWord();
         await playBoop();
         setAutoStopMicRef.current(true);
-        await startMicRef.current();
+        await startMicRef.current({ source: 'wakeword' });
       },
     });
 

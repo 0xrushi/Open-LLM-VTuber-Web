@@ -21,7 +21,7 @@
       "refresh": "刷新",
       "backendBase": "后端基础 URL",
       "websocketEndpoint": "WebSocket 端点（HTTP 探测）",
-      "tts": "TTS（ElevenLabs / 浏览器回退）",
+      "tts": "TTS（Fish Audio）",
       "chatterboxTts": "Chatterbox TTS",
       "gptSovitsTts": "GPT-SoVITS TTS",
       "xtts": "XTTS",

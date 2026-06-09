@@ -66,8 +66,8 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const handleControlMessage = useCallback((controlText: string) => {
     switch (controlText) {
       case 'start-mic':
-        console.log('Starting microphone...');
-        startMic();
+        console.log('Start microphone control ignored while wake-word mode is armed...');
+        startMic({ source: 'control' });
         break;
       case 'stop-mic':
         console.log('Stopping microphone...');
@@ -84,7 +84,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
             if (currentState === 'thinking-speaking') {
               // Auto start mic if enabled
               if (autoStartMicOnConvEndRef.current) {
-                startMic();
+                startMic({ source: 'control' });
               }
               return 'idle';
             }

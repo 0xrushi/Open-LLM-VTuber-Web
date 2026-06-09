@@ -27,6 +27,10 @@ export interface VADSettings {
   redemptionFrames: number;
 }
 
+export interface StartMicOptions {
+  source?: 'wakeword' | 'manual' | 'control';
+}
+
 /**
  * VAD context state interface
  * @interface VADState
@@ -45,7 +49,7 @@ interface VADState {
   setAutoStopMic: (value: boolean) => void;
 
   /** Start microphone and VAD */
-  startMic: () => Promise<void>;
+  startMic: (options?: StartMicOptions) => Promise<void>;
 
   /** Stop microphone and VAD */
   stopMic: () => void;
@@ -91,6 +95,13 @@ const DEFAULT_VAD_STATE = {
   autoStartMicOnConvEnd: false,
 };
 
+const WAKEWORD_ENABLED_STORAGE_KEY = 'heyNamiWakeWordEnabled';
+
+function isWakeWordModeEnabled(): boolean {
+  const persisted = localStorage.getItem(WAKEWORD_ENABLED_STORAGE_KEY);
+  return persisted === null ? true : persisted === 'true';
+}
+
 /**
  * Create the VAD context
  */
@@ -131,6 +142,15 @@ export function VADProvider({ children }: { children: React.ReactNode }) {
     DEFAULT_VAD_STATE.autoStartMicOnConvEnd,
   );
   const autoStartMicOnConvEndRef = useRef(false);
+
+  // A previous page session can leave localStorage.micOn=true even though the
+  // browser killed the actual MediaStream on reload. Reset it so wake-word mode
+  // can arm instead of showing/listening as if raw VAD were already active.
+  useEffect(() => {
+    if (micOn && !vadRef.current) {
+      setMicOn(false);
+    }
+  }, []);
 
   // Force update mechanism for ref updates
   const [, forceUpdate] = useReducer((x) => x + 1, 0);
@@ -173,15 +193,15 @@ export function VADProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     autoStopMicRef.current = autoStopMic;
-  }, []);
+  }, [autoStopMic]);
 
   useEffect(() => {
     autoStartMicRef.current = autoStartMicOn;
-  }, []);
+  }, [autoStartMicOn]);
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
-  }, []);
+  }, [autoStartMicOnConvEnd]);
 
   /**
    * Update previous triggered probability and force re-render
@@ -267,7 +287,7 @@ export function VADProvider({ children }: { children: React.ReactNode }) {
     if (vadRef.current) {
       stopMic();
       setTimeout(() => {
-        startMic();
+        startMic({ source: 'wakeword' });
       }, 100);
     }
   }, []);
@@ -298,8 +318,15 @@ export function VADProvider({ children }: { children: React.ReactNode }) {
   /**
    * Start microphone and VAD processing
    */
-  const startMic = useCallback(async () => {
+  const startMic = useCallback(async (options: StartMicOptions = {}) => {
     try {
+      const source = options.source ?? 'manual';
+      if (source !== 'wakeword' && isWakeWordModeEnabled()) {
+        console.info(`[VAD] Wake-word mode is enabled; ignoring ${source} mic start until “hey Nami” is detected.`);
+        setMicOn(false);
+        return;
+      }
+
       // Check for secure context (HTTPS or localhost) - required for getUserMedia
       if (!window.isSecureContext) {
         throw new Error("Microphone requires HTTPS. Please access via https:// instead of http://. If you see a security warning, click 'Advanced' and 'Proceed'.");

@@ -17,6 +17,7 @@ export interface NanoWakeWordDetectorOptions {
   onScore?: (score: number) => void;
   threshold?: number;
   cooldownMs?: number;
+  consecutiveDetections?: number;
 }
 
 function appendFloat32(a: Float32Array, b: Float32Array): Float32Array {
@@ -109,6 +110,8 @@ export class NanoWakeWordDetector {
 
   private readonly cooldownMs: number;
 
+  private readonly consecutiveDetections: number;
+
   private readonly onDetected: (score: number) => void | Promise<void>;
 
   private readonly onScore?: (score: number) => void;
@@ -143,9 +146,12 @@ export class NanoWakeWordDetector {
 
   private lastDetection = 0;
 
+  private detectionStreak = 0;
+
   constructor(options: NanoWakeWordDetectorOptions) {
     this.threshold = options.threshold ?? 0.95;
     this.cooldownMs = options.cooldownMs ?? 2500;
+    this.consecutiveDetections = options.consecutiveDetections ?? 2;
     this.onDetected = options.onDetected;
     this.onScore = options.onScore;
   }
@@ -198,6 +204,7 @@ export class NanoWakeWordDetector {
     this.melBuffer = new Float32Array(MEL_WINDOW_FRAMES * MEL_BINS).fill(1);
     this.featureBuffer = new Float32Array(0);
     this.predictionWarmupFrames = 0;
+    this.detectionStreak = 0;
   }
 
   private async loadModels(): Promise<void> {
@@ -283,7 +290,11 @@ export class NanoWakeWordDetector {
     this.onScore?.(score);
 
     const now = performance.now();
-    if (score >= this.threshold && now - this.lastDetection > this.cooldownMs) {
+    this.detectionStreak = score >= this.threshold ? this.detectionStreak + 1 : 0;
+    if (
+      this.detectionStreak >= this.consecutiveDetections
+      && now - this.lastDetection > this.cooldownMs
+    ) {
       this.lastDetection = now;
       console.info(`[WakeWord] Detected “hey nami” (${score.toFixed(4)})`);
       this.reset();

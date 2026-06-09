@@ -1,6 +1,7 @@
 import { defineConfig, normalizePath } from 'vite';
 import path from 'path';
 import react from '@vitejs/plugin-react-swc';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 
 const createConfig = async (outDir: string) => ({
   plugins: [
@@ -28,6 +29,7 @@ const createConfig = async (outDir: string) => ({
         },
       ],
     }),
+    basicSsl(),
     react(),
   ],
   resolve: {
@@ -52,11 +54,26 @@ const createConfig = async (outDir: string) => ({
   server: {
     host: '0.0.0.0',
     port: 3000,
+    https: true,
     proxy: {
+      // Terminate HTTPS at Vite and proxy Hermes UI adapter traffic through the
+      // same local-IP origin. This keeps microphone access secure and avoids
+      // browsers blocking ws:// or http://127.0.0.1 from an https:// LAN page.
+      '^/client-ws': {
+        target: 'http://127.0.0.1:18765',
+        changeOrigin: true,
+        ws: true,
+        secure: false,
+      },
+      '^/(health|api/infra)': {
+        target: 'http://127.0.0.1:18765',
+        changeOrigin: true,
+        secure: false,
+      },
       // Static assets under /models, /bg, /avatars, and /live2d-models are served
       // from src/renderer/public during Hermes UI dev. Proxying them to the
       // VTuber backend hides local VRM/GLB/background/Live2D files.
-      '^/(client-ws|vrm|asr|tts-ws|proxy-ws|web-tool|cache|configs)': {
+      '^/(vrm|asr|tts-ws|proxy-ws|web-tool|cache|configs)': {
         target: 'http://localhost:12393',
         changeOrigin: true,
         ws: true,

@@ -15,18 +15,18 @@ type TtsHealth = {
   ok?: boolean;
   provider?: string;
   voice_id?: string;
+  reference_id?: string;
   model_id?: string;
+  format?: string;
+  sample_rate?: number;
+  mp3_bitrate?: number;
+  configured?: boolean;
   tier?: string;
   character_count?: number;
   character_limit?: number;
   message?: string;
   error?: unknown;
 };
-
-const ELEVENLABS_API_KEY = import.meta.env.VITE_ELEVENLABS_API_KEY as string | undefined;
-const ELEVENLABS_VOICE_ID = (import.meta.env.VITE_ELEVENLABS_VOICE_ID as string | undefined) || '21m00Tcm4TlvDq8ikWAM';
-const ELEVENLABS_MODEL_ID = (import.meta.env.VITE_ELEVENLABS_MODEL_ID as string | undefined) || 'eleven_multilingual_v2';
-const ELEVENLABS_OUTPUT_FORMAT = (import.meta.env.VITE_ELEVENLABS_OUTPUT_FORMAT as string | undefined) || 'mp3_44100_128';
 
 function formatError(error: unknown): string {
   if (!error) return '';
@@ -66,7 +66,7 @@ function TTS(): JSX.Element {
     checkTts();
   }, [checkTts]);
 
-  const usesElevenLabs = Boolean(ELEVENLABS_API_KEY);
+  const usesFishAudio = health?.provider === 'fish-audio';
   const ok = health?.ok !== false && !error;
 
   return (
@@ -77,7 +77,7 @@ function TTS(): JSX.Element {
             Frontend TTS
           </Text>
           <Text color="var(--hermes-text-muted)" fontSize="xs" lineHeight="1.5">
-            Hermes sends text; this UI speaks it locally with ElevenLabs when configured, otherwise browser speechSynthesis.
+            Hermes sends text; this UI speaks it through the Fish Audio adapter proxy. Browser speechSynthesis fallback is disabled.
           </Text>
         </Stack>
         <Button
@@ -107,28 +107,24 @@ function TTS(): JSX.Element {
             <HStack>
               <Box w="10px" h="10px" borderRadius="full" bg={ok ? 'green.400' : 'red.400'} />
               <Text color="var(--hermes-text)" fontSize="sm" fontWeight="semibold">
-                {usesElevenLabs ? 'ElevenLabs' : 'Browser speechSynthesis fallback'}
+                {usesFishAudio ? 'Fish Audio' : 'Fish Audio not configured'}
               </Text>
             </HStack>
 
             <Stack gap={1}>
               <Text color="var(--hermes-text-muted)" fontSize="xs">
-                API key: {usesElevenLabs ? 'configured' : 'not configured'}
+                API key: {usesFishAudio ? 'configured in adapter' : 'missing or invalid'}
               </Text>
-              {usesElevenLabs ? (
+              {usesFishAudio ? (
                 <>
-                  <Text color="var(--hermes-text-muted)" fontSize="xs">Voice ID: {ELEVENLABS_VOICE_ID}</Text>
-                  <Text color="var(--hermes-text-muted)" fontSize="xs">Model: {ELEVENLABS_MODEL_ID}</Text>
-                  <Text color="var(--hermes-text-muted)" fontSize="xs">Output: {ELEVENLABS_OUTPUT_FORMAT}</Text>
+                  <Text color="var(--hermes-text-muted)" fontSize="xs">Reference ID: {health?.reference_id || health?.voice_id || 'default voice'}</Text>
+                  <Text color="var(--hermes-text-muted)" fontSize="xs">Model: {health?.model_id ?? 'unknown'}</Text>
+                  <Text color="var(--hermes-text-muted)" fontSize="xs">
+                    Output: {health?.format ?? 'mp3'}
+                    {typeof health?.sample_rate === 'number' ? ` @ ${health.sample_rate} Hz` : ''}
+                    {typeof health?.mp3_bitrate === 'number' ? ` / ${health.mp3_bitrate} kbps` : ''}
+                  </Text>
                 </>
-              ) : null}
-              {health?.tier ? (
-                <Text color="var(--hermes-text-muted)" fontSize="xs">
-                  ElevenLabs tier: {health.tier}
-                  {typeof health.character_count === 'number' && typeof health.character_limit === 'number'
-                    ? ` (${health.character_count}/${health.character_limit} chars)`
-                    : ''}
-                </Text>
               ) : null}
               {health?.message ? (
                 <Text color="var(--hermes-text-muted)" fontSize="xs">{health.message}</Text>
