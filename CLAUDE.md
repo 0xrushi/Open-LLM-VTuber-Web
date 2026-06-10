@@ -89,3 +89,21 @@ The app uses React Context for state management with multiple specialized contex
 - Audio is streamed as base64-encoded data with volume arrays for lip sync
 - The app uses Chakra UI v3 for the component library
 - ESLint is configured with relaxed rules (many checks disabled in .eslintrc.js)
+
+## Hermes UI Gateway Plugin Workflow
+- Source-of-truth plugin copy: `plugins/hermes_ui/`
+- Live installed plugin target: `/Users/bread/.hermes/plugins/hermes_ui/`
+- Always make plugin changes in `plugins/hermes_ui/` first, then copy/deploy them to `/Users/bread/.hermes/plugins/hermes_ui/`.
+- Deploy command from repo root:
+  ```bash
+  rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' plugins/hermes_ui/ /Users/bread/.hermes/plugins/hermes_ui/
+  ```
+- Verify both copies:
+  ```bash
+  /Users/bread/.hermes/hermes-agent/venv/bin/python -m py_compile plugins/hermes_ui/adapter.py
+  /Users/bread/.hermes/hermes-agent/venv/bin/python -m py_compile /Users/bread/.hermes/plugins/hermes_ui/adapter.py
+  ```
+- Restart Hermes gateway after deploying plugin code changes:
+  ```bash
+  /Users/bread/.hermes/hermes-agent/venv/bin/hermes gateway restart
+  ```

@@ -216,3 +216,17 @@ Keep this block so `oc init` can refresh the instructions.
 - There is also a root memory note:
   - `../MEMORY.md`
 - Keep `AGENTS.md` as the active operational memory for this web work; use `../MEMORY.md` only as supplemental project context unless the user explicitly asks to update it too.
+
+## Hermes UI Gateway Plugin Source of Truth
+- The repository copy of the Hermes UI gateway plugin is the source of truth:
+  - `plugins/hermes_ui/`
+- The live installed plugin is only the deployment target:
+  - `/Users/bread/.hermes/plugins/hermes_ui/`
+- Always edit `plugins/hermes_ui/` in this repo first. Do not make lasting changes directly in `/Users/bread/.hermes/plugins/hermes_ui/` without copying them back into the repo.
+- After changing the repo plugin, deploy it with:
+  - `rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' plugins/hermes_ui/ /Users/bread/.hermes/plugins/hermes_ui/`
+- Then verify syntax with:
+  - `/Users/bread/.hermes/hermes-agent/venv/bin/python -m py_compile plugins/hermes_ui/adapter.py`
+  - `/Users/bread/.hermes/hermes-agent/venv/bin/python -m py_compile /Users/bread/.hermes/plugins/hermes_ui/adapter.py`
+- Gateway plugin code changes require a gateway restart before new routes/behavior are live:
+  - `/Users/bread/.hermes/hermes-agent/venv/bin/hermes gateway restart`

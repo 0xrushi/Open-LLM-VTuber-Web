@@ -1,0 +1,26 @@
+name: hermes-ui-platform
+label: Hermes UI
+kind: platform
+version: 0.1.0
+description: >
+  WebSocket gateway adapter for hermes-ui. Serves hermes-ui's /client-ws
+  protocol and maps explicit session_id values to Hermes SessionSource.thread_id
+  so text and voice traffic stay in the selected UI conversation lane.
+author: local
+optional_env:
+  - name: HERMES_UI_HOST
+    description: "Host/interface for the hermes-ui WebSocket adapter (default: 127.0.0.1)"
+    prompt: "Hermes UI host"
+    password: false
+  - name: HERMES_UI_PORT
+    description: "Port for the hermes-ui WebSocket adapter (default: 18765)"
+    prompt: "Hermes UI port"
+    password: false
+  - name: HERMES_UI_SAMPLE_RATE
+    description: "Sample rate for Float32 mic-audio chunks from hermes-ui (default: 16000)"
+    prompt: "Voice sample rate"
+    password: false
+  - name: HERMES_UI_CLIENT_TOKEN
+    description: "Optional client auth token. If set, clients must authenticate with the configured token."
+    prompt: "Client token"
+    password: true
